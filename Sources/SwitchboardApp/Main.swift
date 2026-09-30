@@ -13,6 +13,28 @@ enum Main {
             app.run()
             return
         }
+        if CommandLine.arguments.contains("--check-sharing") {
+            Task {
+                do {
+                    let desktop = try Desktop()
+                    let before = desktop.observe()
+                    let accounts = try AccountStore().load() ?? []
+                    let plan = try await SharedSetupService(executable: desktop.executable)
+                        .prepare(accounts: accounts, currentHome: before.home)
+                    print("Shared setup preflight: accounts=\(accounts.count), customMCP=\(plan.serverCount), projects=\(plan.projectCount), conflicts=\(plan.conflicts.count)")
+                    for index in accounts.indices {
+                        let visible = plan.desktopProjectCounts[index].map(String.init) ?? "uninitialized"
+                        print("Account \(index + 1) projects: backend=\(plan.backendProjectCounts[index]), desktop=\(visible)")
+                    }
+                    let chats = try await SharedSetupService(executable: desktop.executable).chatPreflight(plan)
+                    print("Project chats: perAccount=\(chats.perHome), unique=\(chats.unique), bytes=\(chats.bytes)")
+                    print("Desktop unchanged: \(before == desktop.observe())")
+                } catch { print("Shared setup preflight failed: \(error.localizedDescription)") }
+                app.terminate(nil)
+            }
+            app.run()
+            return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--check") {
             let homes = Array(CommandLine.arguments.dropFirst(index + 1))
             Task { await check(homes: homes); app.terminate(nil) }

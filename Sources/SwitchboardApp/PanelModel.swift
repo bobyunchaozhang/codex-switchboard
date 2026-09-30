@@ -14,14 +14,18 @@ final class PanelModel: ObservableObject {
     @Published private(set) var refreshing = false
     @Published var notice: String?
     @Published private(set) var signingIn = false
+    @Published private(set) var setupReview: SharedSetupPlan?
+    @Published var setupChoices: [String: Int] = [:]
+    private var pendingSwitch: SavedAccount?
     private var currentIdentity: Identity?
     private var cancellation: CancellationFlag?
     private let store: AccountStore
     private let desktop: Desktop?
     private let service: CodexService?
+    private let sharedSetup: SharedSetupService?
     private var loaded = false
     private var storageReady = true
-    var canAct: Bool { loaded && storageReady && !refreshing && busyText == nil && service != nil }
+    var canAct: Bool { loaded && storageReady && !refreshing && busyText == nil && setupReview == nil && service != nil }
     var currentStatus: String {
         if presence == .stopped { return "Codex is not running" }
         return currentIdentity == nil ? "Current account unknown" : "Current account is not added"
@@ -31,11 +35,12 @@ final class PanelModel: ObservableObject {
         store = AccountStore()
         desktop = try? Desktop()
         service = desktop.map { CodexService(executable: $0.executable) }
+        sharedSetup = desktop.map { SharedSetupService(executable: $0.executable) }
         if desktop == nil { notice = SwitchboardFailure.desktopMissing.localizedDescription }
     }
 
     func opened() {
-        guard busyText == nil, !refreshing else { return }
+        guard busyText == nil, !refreshing, setupReview == nil else { return }
         Task {
             if !loaded { await load() }
             await refresh()
@@ -43,7 +48,7 @@ final class PanelModel: ObservableObject {
     }
 
     func refreshClicked() {
-        guard busyText == nil, !refreshing else { return }
+        guard busyText == nil, !refreshing, setupReview == nil else { return }
         Task { if !loaded { await load() }; await refresh() }
     }
 
@@ -125,27 +130,52 @@ final class PanelModel: ObservableObject {
     }
 
     func switchAccount(_ account: SavedAccount) {
-        guard canAct, let service, let desktop else { return }
-        busyText = "Switching account…"; notice = nil
+        guard canAct, let desktop, let sharedSetup else { return }
+        busyText = "Preparing shared setup…"; notice = nil
         Task {
             defer { busyText = nil }
             do {
-                guard let identity = try await service.identity(home: account.home), identity.matches(account.email) else {
-                    states[account.id] = .signIn; throw SwitchboardFailure.signedOut
+                let plan = try await sharedSetup.prepare(accounts: accounts, currentHome: desktop.observe().home)
+                if !plan.conflicts.isEmpty {
+                    pendingSwitch = account; setupReview = plan
+                    setupChoices = Dictionary(uniqueKeysWithValues: plan.conflicts.map { ($0.id, $0.defaultChoice) })
+                    return
                 }
-                currentID = nil; currentIdentity = nil
-                try await desktop.activate(home: account.home)
-                let observed = desktop.observe()
-                guard observed.home == account.home,
-                      let identity = try await service.identity(home: account.home), identity.matches(account.email),
-                      desktop.observe() == observed else { throw SwitchboardFailure.currentUnknown }
-                presence = observed; currentID = account.id; currentIdentity = identity
-                await refresh()
-            } catch {
-                notice = friendly(error)
-                await refresh()
-            }
+                try await performSwitch(account, plan: plan, choices: [:])
+            } catch { notice = friendly(error); await refresh() }
         }
+    }
+
+    func cancelSetupReview() { setupReview = nil; pendingSwitch = nil; setupChoices = [:] }
+
+    func confirmSetupReview() {
+        guard let plan = setupReview, let account = pendingSwitch else { return }
+        let choices = setupChoices
+        cancelSetupReview()
+        busyText = "Switching account…"; notice = nil
+        Task {
+            defer { busyText = nil }
+            do { try await performSwitch(account, plan: plan, choices: choices) }
+            catch { notice = friendly(error); await refresh() }
+        }
+    }
+
+    private func performSwitch(_ account: SavedAccount, plan: SharedSetupPlan, choices: [String: Int]) async throws {
+        guard let service, let desktop, let sharedSetup else { throw SwitchboardFailure.desktopMissing }
+        guard let identity = try await service.identity(home: account.home), identity.matches(account.email) else {
+            states[account.id] = .signIn; throw SwitchboardFailure.signedOut
+        }
+        busyText = "Switching account…"
+        currentID = nil; currentIdentity = nil
+        try await desktop.activate(home: account.home) {
+            try await sharedSetup.apply(plan, choices: choices, target: account)
+        }
+        let observed = desktop.observe()
+        guard observed.home == account.home,
+              let identity = try await service.identity(home: account.home), identity.matches(account.email),
+              desktop.observe() == observed else { throw SwitchboardFailure.currentUnknown }
+        presence = observed; currentID = account.id; currentIdentity = identity
+        await refresh()
     }
 
     func signIn(_ account: SavedAccount? = nil) {
@@ -212,7 +242,9 @@ final class PanelModel: ObservableObject {
     }
 
     private func friendly(_ error: Error) -> String {
-        (error as? SwitchboardFailure)?.localizedDescription ?? "The operation could not be completed."
+        if let chat = error as? ChatSharingFailure { return chat.localizedDescription }
+        if let sharing = error as? SharingFailure { return sharing.localizedDescription }
+        return (error as? SwitchboardFailure)?.localizedDescription ?? "The operation could not be completed."
     }
 
     static func preview(accountCount: Int = 2, loading: Bool = false, refreshingCached: Bool = false) -> PanelModel {

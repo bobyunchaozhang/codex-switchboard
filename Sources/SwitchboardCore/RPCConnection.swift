@@ -33,7 +33,7 @@ final class RPCConnection {
     private var closed = false
     private let cancellation: CancellationFlag
 
-    init(executable: URL, home: String, cancellation: CancellationFlag = CancellationFlag()) throws {
+    init(executable: URL, home: String, cancellation: CancellationFlag = CancellationFlag(), experimental: Bool = false) throws {
         self.cancellation = cancellation
         process.executableURL = executable
         process.arguments = ["app-server", "--stdio"]
@@ -47,8 +47,8 @@ final class RPCConnection {
         do {
             try process.run()
             _ = try request("initialize", params: ["clientInfo": [
-                "name": "codex_switchboard", "title": "Codex Switchboard", "version": "0.1.0"
-            ]])
+                "name": "codex_switchboard", "title": "Codex Switchboard", "version": "0.3.0"
+            ], "capabilities": ["experimentalApi": experimental]])
             try send(["method": "initialized", "params": [:]])
         } catch { close(); throw error }
     }

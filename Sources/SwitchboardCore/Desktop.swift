@@ -42,7 +42,8 @@ public final class Desktop {
         return .running(pid: app.processIdentifier, home: home)
     }
 
-    public func activate(home: String) async throws {
+    public func activate(home: String, beforeLaunch: (() async throws -> Void)? = nil) async throws {
+        let previousHome = observe().home
         let apps = runningApplications()
         guard apps.count <= 1 else { throw SwitchboardFailure.currentUnknown }
         if let app = apps.first {
@@ -52,6 +53,17 @@ public final class Desktop {
             guard app.isTerminated else { throw SwitchboardFailure.quitFailed }
         }
         guard runningApplications().isEmpty else { throw SwitchboardFailure.quitFailed }
+        do {
+            try await beforeLaunch?()
+            try await launch(home: home)
+        } catch {
+            // A failed setup must not strand the user with the desktop closed.
+            if runningApplications().isEmpty, let previousHome { try? await launch(home: previousHome) }
+            throw error
+        }
+    }
+
+    private func launch(home: String) async throws {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.environment = ["CODEX_HOME": home]
         configuration.activates = true

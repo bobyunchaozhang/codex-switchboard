@@ -7,8 +7,20 @@ This is a fresh implementation. BobToolbox is a visual and historical reference;
 do not copy its code or expand the approved feature set.
 
 Use official Codex App Server requests for identity, usage, login, and logout.
-Never read, copy, or log authentication secrets. Never synchronize project or
-chat databases. Keep each account's existing Codex home intact.
+Never read, copy, or log Codex authentication secrets or OAuth credential stores.
+User-configured MCP definitions can include API keys; keep shared definitions and
+configuration backups private (0700 directories, 0600 files), never print them.
+Share custom MCP definitions and project registrations through the approved
+shared registry and App Server APIs. The sidebar also requires a narrow update of
+project fields in .codex-global-state.json while the desktop is stopped. Preserve
+unrelated fields, existing local project IDs, and chat associations; back up only
+project fields. Never treat project/list success as sidebar verification.
+Keep desktop-managed runtime MCP settings
+local. The user now authorizes sharing local-project chats: share their individual
+rollout files and use official resume/metadata APIs for per-home indexes. Preserve
+projectless chats, authentication, existing homes, and separate SQLite databases.
+Never merge or redirect entire chat databases. Back up original rollout contents
+before linking; conflicting copies must stop the switch, never overwrite history.
 
 Build with `swift build --product CodexSwitchboard`; run focused checks with
 `swift run SwitchboardChecks` (no Xcode test framework required). Package with

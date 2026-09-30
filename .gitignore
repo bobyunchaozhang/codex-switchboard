@@ -4,3 +4,18 @@ dist/
 .DS_Store
 xcuserdata/
 *.xcuserstate
+
+# Python integration test caches
+__pycache__/
+*.py[cod]
+
+# Local runtime data and credentials must never be published
+.env
+.env.*
+!.env.example
+/auth.json
+/.credentials.json
+/.codex-global-state.json
+/accounts.json
+/Shared/
+/Accounts/

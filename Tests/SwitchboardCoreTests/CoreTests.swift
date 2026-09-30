@@ -180,6 +180,21 @@ private func expectThrows<T>(_ expression: @autoclosure () throws -> T) throws {
 struct CheckRunner {
     static func main() async {
         if CommandLine.arguments.contains("--hold-process") { try? await Task.sleep(nanoseconds: 5_000_000_000); return }
+        if let index = CommandLine.arguments.firstIndex(of: "--chat-fixture"), CommandLine.arguments.count == index + 4 {
+            do {
+                let root = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+                guard root.lastPathComponent.hasPrefix("switchboard-chat-check-"),
+                      FileManager.default.fileExists(atPath: root.appendingPathComponent("synthetic-only").path) else { throw ChatSharingFailure.storage }
+                let accounts = ["a", "b", "c"].map { SavedAccount(home: root.appendingPathComponent($0).path, email: $0 + "@example.test") }
+                let target = accounts.first { URL(fileURLWithPath: $0.home).lastPathComponent == CommandLine.arguments[index + 3] }!
+                let service = SharedSetupService(executable: URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"), directory: root.appendingPathComponent("shared"))
+                let plan = try await service.prepare(accounts: accounts, currentHome: root.appendingPathComponent(CommandLine.arguments[index + 2]).path)
+                guard plan.conflicts.isEmpty else { throw ChatSharingFailure.conflict }
+                try await service.apply(plan, choices: [:], target: target)
+                print("PASS: Shared project chats applied to synthetic target")
+                exit(0)
+            } catch { print("FAIL: Synthetic sharing: \(String(describing: error))"); exit(1) }
+        }
         let tests = CoreChecks()
         let checks: [(String, () throws -> Void)] = [
             ("Reset credit expiries and partial details", tests.testResetCreditExpiriesAndPartialDetails),
@@ -192,7 +207,8 @@ struct CheckRunner {
             ("Duplicate email protection", tests.testDuplicateEmailIsRejected),
             ("Fragmented JSON protocol", tests.testLineBufferPreservesPartialAndCoalescedMessages),
             ("Process home with spaces", tests.testProcessHomePreservesSpaces),
-            ("Buffered notifications and timeout", tests.testRPCReadsReplyAlreadyBufferedBehindNotification)
+            ("Buffered notifications and timeout", tests.testRPCReadsReplyAlreadyBufferedBehindNotification),
+            ("Shared setup conflicts, deletions and new accounts", SharedSetupChecks.merging)
         ]
         var failures = 0
         for (name, check) in checks {
@@ -202,6 +218,12 @@ struct CheckRunner {
         do { try await tests.testLogoutChecksGuardBeforeSendingCommand(); print("PASS: Logout guard precedes command") }
         catch { failures += 1; print("FAIL: Logout guard precedes command") }
         print("\(checks.count + 1 - failures)/\(checks.count + 1) checks passed")
+        if let index = CommandLine.arguments.firstIndex(of: "--integration-cli"), CommandLine.arguments.count > index + 1 {
+            do {
+                try await SharedSetupChecks.integration(executable: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                print("PASS: Installed CLI shares setup and preserves chats after project removal")
+            } catch { failures += 1; print("FAIL: Shared setup integration (\(error.localizedDescription))") }
+        }
         exit(failures == 0 ? 0 : 1)
     }
 }
