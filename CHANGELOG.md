@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-10-01
+
+- Clear stale transient action errors after a later successful panel-open or manual refresh.
+- Identify the failed operation in error banners and retain unresolved storage, sharing, and compatibility errors.
+- Log sanitized operation/error categories for diagnosis, without account details or credentials.
+- Add focused notice-recovery checks; the original intermittent failure has not been reproduced.
+
 ## 0.3.0 — 2026-09-30
 
 - Share custom MCP definitions and local project registrations across accounts.

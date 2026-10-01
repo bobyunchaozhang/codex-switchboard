@@ -27,3 +27,9 @@ Build with `swift build --product CodexSwitchboard`; run focused checks with
 `./scripts/build-app.sh`. Do not quit the hosting Codex desktop application or
 log out a real account during automated validation; these terminate the user's
 session. Prepare the app first and record remaining manual acceptance steps.
+
+For every version update, update the release documentation, commit the verified
+changes, and push the commit and matching version tag to the configured GitHub
+remote. The user has authorized this recurring release step; do not leave a
+version update only on the local machine. Verify the remote commit and report
+any upload failure without claiming the release was uploaded.

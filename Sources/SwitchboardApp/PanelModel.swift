@@ -1,6 +1,15 @@
 import AppKit
+import OSLog
 import SwiftUI
 import SwitchboardCore
+
+enum PanelOperation: String {
+    case prepareSwitch = "Prepare account switch"
+    case switchAccount = "Switch account"
+    case signIn = "Sign in"
+    case removeAccount = "Remove account"
+    case saveAccounts = "Save account details"
+}
 
 enum CardState { case loading, available(Usage), unavailable, signIn }
 
@@ -16,6 +25,8 @@ final class PanelModel: ObservableObject {
     @Published private(set) var signingIn = false
     @Published private(set) var setupReview: SharedSetupPlan?
     @Published var setupChoices: [String: Int] = [:]
+    private var recoverableNotice: String?
+    private let logger = Logger(subsystem: "local.codex-switchboard.app", category: "operations")
     private var pendingSwitch: SavedAccount?
     private var currentIdentity: Identity?
     private var cancellation: CancellationFlag?
@@ -43,13 +54,13 @@ final class PanelModel: ObservableObject {
         guard busyText == nil, !refreshing, setupReview == nil else { return }
         Task {
             if !loaded { await load() }
-            await refresh()
+            await refresh(clearPreviousTransientError: true)
         }
     }
 
     func refreshClicked() {
         guard busyText == nil, !refreshing, setupReview == nil else { return }
-        Task { if !loaded { await load() }; await refresh() }
+        Task { if !loaded { await load() }; await refresh(clearPreviousTransientError: true) }
     }
 
     private func load() async {
@@ -69,8 +80,9 @@ final class PanelModel: ObservableObject {
         }
     }
 
-    private func refresh() async {
+    private func refresh(clearPreviousTransientError: Bool = false) async {
         guard !refreshing, let service, let desktop, storageReady else { return }
+        let previousError = clearPreviousTransientError ? recoverableNotice : nil
         beginRefresh(observed: desktop.observe())
         defer { refreshing = false }
         let before = presence
@@ -103,7 +115,7 @@ final class PanelModel: ObservableObject {
         }
         if updated != accounts {
             do { try store.save(updated); accounts = updated }
-            catch { notice = SwitchboardFailure.storage.localizedDescription }
+            catch { reportFailure(SwitchboardFailure.storage, operation: .saveAccounts) }
         }
         // Keep the previous identity during loading only; the completed read must confirm it again.
         currentID = nil; currentIdentity = nil
@@ -119,6 +131,7 @@ final class PanelModel: ObservableObject {
         let after = desktop.observe()
         presence = after
         if after != before { currentID = nil; currentIdentity = nil }
+        else { clearRecoveredNotice(previousError) }
     }
 
     private func beginRefresh(observed: DesktopPresence) {
@@ -134,6 +147,7 @@ final class PanelModel: ObservableObject {
         busyText = "Preparing shared setup…"; notice = nil
         Task {
             defer { busyText = nil }
+            var operation = PanelOperation.prepareSwitch
             do {
                 let plan = try await sharedSetup.prepare(accounts: accounts, currentHome: desktop.observe().home)
                 if !plan.conflicts.isEmpty {
@@ -141,8 +155,9 @@ final class PanelModel: ObservableObject {
                     setupChoices = Dictionary(uniqueKeysWithValues: plan.conflicts.map { ($0.id, $0.defaultChoice) })
                     return
                 }
+                operation = .switchAccount
                 try await performSwitch(account, plan: plan, choices: [:])
-            } catch { notice = friendly(error); await refresh() }
+            } catch { reportFailure(error, operation: operation); await refresh() }
         }
     }
 
@@ -156,7 +171,7 @@ final class PanelModel: ObservableObject {
         Task {
             defer { busyText = nil }
             do { try await performSwitch(account, plan: plan, choices: choices) }
-            catch { notice = friendly(error); await refresh() }
+            catch { reportFailure(error, operation: .switchAccount); await refresh() }
         }
     }
 
@@ -201,7 +216,7 @@ final class PanelModel: ObservableObject {
                 if let account, desktop?.observe().home == account.home { try await desktop?.activate(home: account.home) }
                 await refresh()
             } catch {
-                notice = friendly(error)
+                reportFailure(error, operation: .signIn)
                 await refresh()
             }
         }
@@ -237,8 +252,39 @@ final class PanelModel: ObservableObject {
                 try store.save(updated)
                 accounts = updated; states.removeValue(forKey: account.id)
                 await refresh()
-            } catch { notice = friendly(error); await refresh() }
+            } catch { reportFailure(error, operation: .removeAccount); await refresh() }
         }
+    }
+
+    // Called only after a user-initiated refresh finishes. An action's own
+    // follow-up refresh must not immediately erase its failure message.
+    func clearRecoveredNotice(_ previous: String?) {
+        guard let previous, previous == recoverableNotice, notice == previous,
+              !accounts.isEmpty, accounts.allSatisfy({
+                  if case .available = states[$0.id] { return true }; return false
+              }) else { return }
+        notice = nil; recoverableNotice = nil
+    }
+
+    func reportFailure(_ error: Error, operation: PanelOperation) {
+        let message = operation.rawValue + " failed. " + friendly(error)
+        var recoverable = false
+        let category: String
+        if let failure = error as? SwitchboardFailure {
+            switch failure {
+            case .unavailable, .timeout: recoverable = true
+            case .protocolError(let code): recoverable = code != -32601 && code != -32602
+            default: break
+            }
+            category = String(describing: failure)
+        } else if let failure = error as? SharingFailure { category = String(describing: failure) }
+        else if let failure = error as? ChatSharingFailure { category = String(describing: failure) }
+        else { category = "unexpected-error" }
+        // Only fixed operation labels, error cases, and numeric protocol codes.
+        // Never log raw error descriptions, emails, paths, payloads, or tokens.
+        logger.error("\(operation.rawValue, privacy: .public) failed: \(category, privacy: .public)")
+        notice = message
+        recoverableNotice = recoverable ? message : nil
     }
 
     private func friendly(_ error: Error) -> String {

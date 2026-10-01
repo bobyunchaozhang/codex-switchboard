@@ -104,7 +104,10 @@ public enum SwitchboardFailure: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .unavailable, .protocolError: return "Unavailable"
+        case .unavailable: return "Codex could not complete the request. Refresh and try again."
+        case .protocolError(let code):
+            if code == -32601 || code == -32602 { return "This request is incompatible with the installed Codex version." }
+            return "Codex returned an error. Refresh and try again."
         case .timeout: return "Codex did not respond in time."
         case .signedOut: return "Sign in required."
         case .identityChanged: return "The account identity has changed. Sign in with the saved email."

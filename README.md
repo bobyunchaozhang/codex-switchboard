@@ -3,7 +3,7 @@
 A macOS menu bar app for viewing Codex account usage and switching accounts while
 sharing custom MCP configuration, local projects, and project chat history.
 
-**Current version: 0.3.0.** Real two-account round-trip chat continuation was
+**Current version: 0.3.1.** Real two-account round-trip chat continuation was
 accepted on September 30, 2026. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Open the app
@@ -20,6 +20,8 @@ You can also search for **Codex Switchboard** in Spotlight (`Command-Space`).
 - Opening the panel refreshes all accounts. Previous results stay visible while
   **Refreshing…** is shown; a failed read clears the affected quota values.
   The cache lasts for the current app session.
+- Action errors identify the failed operation. A later successful refresh clears stale
+  transient errors; unresolved storage, sharing, and compatibility errors remain visible.
 - Each card shows the email, plan, quota windows, remaining percentages, reset
   times, and reset credits. Expand the credits row for individual expiry dates.
 - The gold **Current** badge identifies the confirmed active account.
