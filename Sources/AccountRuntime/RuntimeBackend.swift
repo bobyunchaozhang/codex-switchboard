@@ -3,18 +3,19 @@ import Foundation
 import SwitchboardCore
 
 @MainActor
-protocol PreviewRuntime {
+protocol RuntimeBackend {
     var presence: DesktopPresence { get }
     func validate(home: String) async throws
     func read(home: String) async -> Reading
     func login(home: String, cancellation: CancellationFlag) async throws -> Identity
+    func logout(home: String, email: String, stillNonCurrent: @escaping @MainActor () -> Bool) async throws
     func activate(home: String, change: @escaping () async throws -> Void) async throws
     func quiescent(home: String) async throws
     func checkLegacy() throws
 }
 
 @MainActor
-final class InstalledRuntime: PreviewRuntime {
+final class InstalledRuntime: RuntimeBackend {
     private let desktop: Desktop
     private let service: CodexService
     init() throws {
@@ -23,8 +24,8 @@ final class InstalledRuntime: PreviewRuntime {
     }
     var presence: DesktopPresence { desktop.observe() }
     func validate(home: String) async throws {
-        do { try await PreviewBackend.validateConfiguration(executable: desktop.executable, home: home) }
-        catch { throw PreviewError.policy }
+        do { try await AuthBackend.validateConfiguration(executable: desktop.executable, home: home) }
+        catch { throw AccountFailure.policy }
     }
     func read(home: String) async -> Reading { await service.read(home: home) }
     func login(home: String, cancellation: CancellationFlag) async throws -> Identity {
@@ -32,12 +33,17 @@ final class InstalledRuntime: PreviewRuntime {
             Task { @MainActor in NSWorkspace.shared.open(url) }
         }
     }
+    func logout(home: String, email: String, stillNonCurrent: @escaping @MainActor () -> Bool) async throws {
+        try await service.logout(SavedAccount(home: home, email: email)) {
+            DispatchQueue.main.sync { MainActor.assumeIsolated { stillNonCurrent() } }
+        }
+    }
     func activate(home: String, change: @escaping () async throws -> Void) async throws {
         try await desktop.activate(home: home, beforeLaunch: change)
     }
     func checkLegacy() throws {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: "local.codex-switchboard.app").isEmpty else {
-            throw PreviewError.legacyApp
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: "local.codex-switchboard.preview").isEmpty else {
+            throw AccountFailure.legacyApp
         }
     }
     func quiescent(home: String) async throws {
@@ -46,7 +52,7 @@ final class InstalledRuntime: PreviewRuntime {
             if try !hasWriter(home: home) { return }
             try await Task.sleep(nanoseconds: 200_000_000)
         } while Date() < deadline
-        throw PreviewError.writers
+        throw AccountFailure.writers
     }
     private func hasWriter(home: String) throws -> Bool {
         // Process names only: never request command arguments or environment dumps.
@@ -58,7 +64,7 @@ final class InstalledRuntime: PreviewRuntime {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0, let output = String(data: data, encoding: .utf8) else {
-            throw PreviewError.writers
+            throw AccountFailure.writers
         }
         for line in output.split(separator: "\n") {
             let fields = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })

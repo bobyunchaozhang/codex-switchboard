@@ -5,16 +5,14 @@ let package = Package(
     name: "CodexSwitchboard",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "CodexSwitchboard", targets: ["SwitchboardApp"]),
-        .executable(name: "SwitchboardPreview", targets: ["SwitchboardPreview"])
+        .executable(name: "CodexSwitchboard", targets: ["SwitchboardApp"])
     ],
     targets: [
         .target(name: "ProcessEnvironment", publicHeadersPath: "include"),
         .target(name: "SwitchboardCore", dependencies: ["ProcessEnvironment"]),
-        .executableTarget(name: "SwitchboardApp", dependencies: ["SwitchboardCore"]),
-        .target(name: "PreviewCore", dependencies: ["SwitchboardCore"]),
-        .executableTarget(name: "SwitchboardPreview", dependencies: ["PreviewCore", "SwitchboardCore"]),
-        .executableTarget(name: "PreviewChecks", dependencies: ["PreviewCore", "SwitchboardCore"], path: "Tests/PreviewChecks"),
+        .executableTarget(name: "SwitchboardApp", dependencies: ["SwitchboardCore", "AccountRuntime"]),
+        .target(name: "AccountRuntime", dependencies: ["SwitchboardCore"]),
+        .executableTarget(name: "AccountRuntimeChecks", dependencies: ["AccountRuntime", "SwitchboardCore"], path: "Tests/AccountRuntimeChecks"),
         .executableTarget(name: "SwitchboardChecks", dependencies: ["SwitchboardCore"], path: "Tests/SwitchboardCoreTests")
     ]
 )

@@ -11,33 +11,6 @@ struct PanelView: View {
     @ViewState private var contentHeight: CGFloat = 180
 
     var body: some View {
-        if let review = model.setupReview {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Review shared setup").font(.headline)
-                Text("Choose the version all accounts will use. Your chats stay with each account.")
-                    .font(.caption).foregroundStyle(.secondary)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(review.conflicts) { conflict in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(conflict.name).font(.subheadline.weight(.semibold))
-                                Text(conflict.kind).font(.caption).foregroundStyle(.secondary)
-                                Picker("Use settings from", selection: Binding(
-                                    get: { model.setupChoices[conflict.id] ?? conflict.defaultChoice },
-                                    set: { model.setupChoices[conflict.id] = $0 })) {
-                                    ForEach(conflict.choices) { choice in Text(choice.label).tag(choice.id) }
-                                }.labelsHidden()
-                            }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(height: min(CGFloat(review.conflicts.count) * 90, 380))
-                HStack {
-                    Button("Cancel", action: model.cancelSetupReview)
-                    Spacer()
-                    Button("Apply and Switch", action: model.confirmSetupReview).buttonStyle(.borderedProminent)
-                }.controlSize(.small)
-            }.padding(12).frame(width: 380)
-        } else {
         VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 8) {
                 Text("Codex Switchboard").font(.system(size: 13, weight: .semibold))
@@ -103,6 +76,9 @@ struct PanelView: View {
                         .buttonStyle(.plain).font(.caption2).help("Dismiss")
                 }
             }
+            if model.needsRecovery {
+                Button("Recover Interrupted Operation", action: model.recover).disabled(model.busyText != nil)
+            }
             HStack {
                 Button { model.signIn() } label: { Label("Add Account", systemImage: "plus") }
                     .buttonStyle(.borderless).disabled(!model.canAct)
@@ -113,7 +89,6 @@ struct PanelView: View {
             .font(.caption).controlSize(.small)
         }
         .padding(12).frame(width: 380)
-        }
     }
 }
 

@@ -1,7 +1,9 @@
 import AppKit
+import Combine
 import OSLog
 import SwiftUI
 import SwitchboardCore
+import AccountRuntime
 
 enum PanelOperation: String {
     case prepareSwitch = "Prepare account switch"
@@ -23,237 +25,94 @@ final class PanelModel: ObservableObject {
     @Published private(set) var refreshing = false
     @Published var notice: String?
     @Published private(set) var signingIn = false
-    @Published private(set) var setupReview: SharedSetupPlan?
-    @Published var setupChoices: [String: Int] = [:]
+    @Published private(set) var needsRecovery = false
     private var recoverableNotice: String?
-    private let logger = Logger(subsystem: "local.codex-switchboard.app", category: "operations")
-    private var pendingSwitch: SavedAccount?
     private var currentIdentity: Identity?
-    private var cancellation: CancellationFlag?
-    private let store: AccountStore
-    private let desktop: Desktop?
-    private let service: CodexService?
-    private let sharedSetup: SharedSetupService?
     private var loaded = false
-    private var storageReady = true
-    var canAct: Bool { loaded && storageReady && !refreshing && busyText == nil && setupReview == nil && service != nil }
+    private var storageReady = false
+    private var runtime: AccountController?
+    private var observer: AnyCancellable?
+    private let logger = Logger(subsystem: "local.codex-switchboard.app", category: "operations")
+    var canAct: Bool { loaded && storageReady && !refreshing && busyText == nil && !needsRecovery }
     var currentStatus: String {
         if presence == .stopped { return "Codex is not running" }
         return currentIdentity == nil ? "Current account unknown" : "Current account is not added"
     }
 
-    init() {
-        store = AccountStore()
-        desktop = try? Desktop()
-        service = desktop.map { CodexService(executable: $0.executable) }
-        sharedSetup = desktop.map { SharedSetupService(executable: $0.executable) }
-        if desktop == nil { notice = SwitchboardFailure.desktopMissing.localizedDescription }
-    }
-
-    func opened() {
-        guard busyText == nil, !refreshing, setupReview == nil else { return }
-        Task {
-            if !loaded { await load() }
-            await refresh(clearPreviousTransientError: true)
-        }
-    }
-
-    func refreshClicked() {
-        guard busyText == nil, !refreshing, setupReview == nil else { return }
-        Task { if !loaded { await load() }; await refresh(clearPreviousTransientError: true) }
-    }
-
-    private func load() async {
-        guard let service else { loaded = true; return }
-        refreshing = true
-        defer { refreshing = false; loaded = true }
+    init(loadRuntime: Bool = true) {
+        guard loadRuntime else { return }
         do {
-            if let saved = try store.load() { accounts = saved; return }
-            let home = desktop?.observe().home ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
-            if let identity = try await service.identity(home: home) {
-                let account = SavedAccount(home: home, email: identity.email, plan: identity.plan)
-                try store.save([account]); accounts = [account]
-            } else { try store.save([]) }
-        } catch {
-            storageReady = false
-            notice = "Could not load accounts. Existing account data has been kept."
-        }
+            let runtime = try AccountController(); self.runtime = runtime
+            storageReady = true; loaded = true; synchronize()
+            observer = runtime.objectWillChange.sink { [weak self] _ in
+                DispatchQueue.main.async { self?.synchronize() }
+            }
+        } catch { notice = error.localizedDescription; loaded = true }
     }
 
-    private func refresh(clearPreviousTransientError: Bool = false) async {
-        guard !refreshing, let service, let desktop, storageReady else { return }
-        let previousError = clearPreviousTransientError ? recoverableNotice : nil
-        beginRefresh(observed: desktop.observe())
-        defer { refreshing = false }
-        let before = presence
-        let saved = accounts
-        var readings: [UUID: Reading] = [:]
-        await withTaskGroup(of: (UUID, Reading).self) { group in
-            var iterator = saved.makeIterator()
-            for _ in 0..<min(3, saved.count) {
-                if let account = iterator.next() {
-                    group.addTask { (account.id, await service.read(home: account.home)) }
-                }
-            }
-            while let (id, reading) = await group.next() {
-                readings[id] = reading
-                if let account = iterator.next() {
-                    group.addTask { (account.id, await service.read(home: account.home)) }
-                }
-            }
+    private func synchronize() {
+        guard let runtime else { return }
+        accounts = runtime.accounts.map { SavedAccount(id: $0.id, home: runtime.home.path, email: $0.email, plan: $0.plan) }
+        for account in runtime.accounts {
+            if let reading = runtime.readings[account.id] {
+                if reading.needsLogin || account.needsLogin { states[account.id] = .signIn }
+                else if let identity = reading.identity, identity.matches(account.email), let usage = reading.usage { states[account.id] = .available(usage) }
+                else { states[account.id] = .unavailable }
+            } else if account.needsLogin { states[account.id] = .signIn }
+            else if states[account.id] == nil { states[account.id] = .loading }
         }
-        var updated = accounts
-        for index in updated.indices {
-            let account = updated[index]
-            guard let reading = readings[account.id] else { states[account.id] = .unavailable; continue }
-            if reading.needsLogin { states[account.id] = .signIn }
-            else if let identity = reading.identity, !identity.matches(account.email) { states[account.id] = .signIn }
-            else if let identity = reading.identity, let usage = reading.usage {
-                updated[index].plan = identity.plan
-                states[account.id] = .available(usage)
-            } else { states[account.id] = .unavailable }
-        }
-        if updated != accounts {
-            do { try store.save(updated); accounts = updated }
-            catch { reportFailure(SwitchboardFailure.storage, operation: .saveAccounts) }
-        }
-        // Keep the previous identity during loading only; the completed read must confirm it again.
-        currentID = nil; currentIdentity = nil
-        if let home = before.home {
-            if let match = accounts.first(where: { $0.home == home }), let reading = readings[match.id],
-               !reading.needsLogin, let identity = reading.identity, identity.matches(match.email) {
-                currentIdentity = identity; currentID = match.id
-            } else if !accounts.contains(where: { $0.home == home }) {
-                currentIdentity = try? await service.identity(home: home)
-                if let identity = currentIdentity { currentID = accounts.first(where: { identity.matches($0.email) })?.id }
-            }
-        }
-        let after = desktop.observe()
-        presence = after
-        if after != before { currentID = nil; currentIdentity = nil }
-        else { clearRecoveredNotice(previousError) }
+        states = states.filter { id, _ in accounts.contains { $0.id == id } }
+        currentID = runtime.current; presence = runtime.presence
+        currentIdentity = runtime.currentEmail.map { Identity(email: $0, plan: nil) }
+        signingIn = runtime.signingIn; needsRecovery = runtime.needsRecovery
+        if !refreshing { busyText = runtime.busy ? (runtime.message.isEmpty ? "Working…" : runtime.message) : nil }
+        if runtime.failed { notice = runtime.message }
     }
 
+    func opened() { refreshClicked() }
+    func refreshClicked() {
+        guard !refreshing, busyText == nil, let runtime, !needsRecovery else { return }
+        let previous = notice
+        beginRefresh(observed: runtime.presence)
+        Task {
+            await runtime.refresh()
+            refreshing = false; synchronize()
+            if !runtime.failed, previous == notice, accounts.allSatisfy({ if case .available = states[$0.id] { return true }; return false }) {
+                notice = nil; recoverableNotice = nil
+            }
+        }
+    }
     private func beginRefresh(observed: DesktopPresence) {
         refreshing = true
         if observed != presence { currentID = nil; currentIdentity = nil }
         presence = observed
-        // Preserve the last result until its replacement arrives. Only new cards need a placeholder.
         for account in accounts where states[account.id] == nil { states[account.id] = .loading }
     }
-
     func switchAccount(_ account: SavedAccount) {
-        guard canAct, let desktop, let sharedSetup else { return }
-        busyText = "Preparing shared setup…"; notice = nil
-        Task {
-            defer { busyText = nil }
-            var operation = PanelOperation.prepareSwitch
-            do {
-                let plan = try await sharedSetup.prepare(accounts: accounts, currentHome: desktop.observe().home)
-                if !plan.conflicts.isEmpty {
-                    pendingSwitch = account; setupReview = plan
-                    setupChoices = Dictionary(uniqueKeysWithValues: plan.conflicts.map { ($0.id, $0.defaultChoice) })
-                    return
-                }
-                operation = .switchAccount
-                try await performSwitch(account, plan: plan, choices: [:])
-            } catch { reportFailure(error, operation: operation); await refresh() }
-        }
-    }
-
-    func cancelSetupReview() { setupReview = nil; pendingSwitch = nil; setupChoices = [:] }
-
-    func confirmSetupReview() {
-        guard let plan = setupReview, let account = pendingSwitch else { return }
-        let choices = setupChoices
-        cancelSetupReview()
+        guard canAct, let runtime else { return }
         busyText = "Switching account…"; notice = nil
-        Task {
-            defer { busyText = nil }
-            do { try await performSwitch(account, plan: plan, choices: choices) }
-            catch { reportFailure(error, operation: .switchAccount); await refresh() }
-        }
+        Task { await runtime.switchTo(account.id); synchronize() }
     }
-
-    private func performSwitch(_ account: SavedAccount, plan: SharedSetupPlan, choices: [String: Int]) async throws {
-        guard let service, let desktop, let sharedSetup else { throw SwitchboardFailure.desktopMissing }
-        guard let identity = try await service.identity(home: account.home), identity.matches(account.email) else {
-            states[account.id] = .signIn; throw SwitchboardFailure.signedOut
-        }
-        busyText = "Switching account…"
-        currentID = nil; currentIdentity = nil
-        try await desktop.activate(home: account.home) {
-            try await sharedSetup.apply(plan, choices: choices, target: account)
-        }
-        let observed = desktop.observe()
-        guard observed.home == account.home,
-              let identity = try await service.identity(home: account.home), identity.matches(account.email),
-              desktop.observe() == observed else { throw SwitchboardFailure.currentUnknown }
-        presence = observed; currentID = account.id; currentIdentity = identity
-        await refresh()
-    }
-
     func signIn(_ account: SavedAccount? = nil) {
-        guard canAct, let service else { return }
-        notice = nil; busyText = "Finish signing in in your browser…"; signingIn = true
-        let flag = CancellationFlag(); cancellation = flag
+        guard canAct, let runtime else { return }
+        busyText = "Waiting for sign-in…"; notice = nil
         Task {
-            defer { signingIn = false; busyText = nil; cancellation = nil }
-            do {
-                let home = try account?.home ?? store.newHome()
-                let identity = try await service.login(home: home, cancellation: flag) { url in
-                    DispatchQueue.main.async { NSWorkspace.shared.open(url) }
-                }
-                if let account, !identity.matches(account.email) { throw SwitchboardFailure.identityChanged }
-                if accounts.contains(where: { $0.id != account?.id && identity.matches($0.email) }) {
-                    throw SwitchboardFailure.duplicateAccount
-                }
-                var updated = accounts
-                if let account, let index = updated.firstIndex(where: { $0.id == account.id }) {
-                    updated[index].plan = identity.plan
-                } else { updated.append(SavedAccount(home: home, email: identity.email, plan: identity.plan)) }
-                try store.save(updated); accounts = updated
-                if let account, desktop?.observe().home == account.home { try await desktop?.activate(home: account.home) }
-                await refresh()
-            } catch {
-                reportFailure(error, operation: .signIn)
-                await refresh()
-            }
+            await runtime.addAccount(replacing: account?.id)
+            if !runtime.failed { await runtime.refresh() }
+            synchronize()
         }
     }
-
-    func cancelSignIn() { cancellation?.cancel() }
-
-    func canRemove(_ account: SavedAccount) -> Bool {
-        canAct && RemovalPolicy.allows(account, desktop: presence, identity: currentIdentity)
-    }
-
+    func cancelSignIn() { runtime?.cancelSignIn() }
+    func canRemove(_ account: SavedAccount) -> Bool { canAct && runtime?.canRemove(account.id) == true }
     func remove(_ account: SavedAccount) {
-        guard canRemove(account), let service, let desktop else { return }
+        guard canRemove(account), let runtime else { return }
         busyText = "Removing account…"; notice = nil
-        Task {
-            defer { busyText = nil }
-            do {
-                let observed = desktop.observe()
-                let identity: Identity?
-                if let home = observed.home { identity = try await service.identity(home: home) }
-                else { identity = nil }
-                guard observed == desktop.observe(), RemovalPolicy.allows(account, desktop: observed, identity: identity) else {
-                    throw SwitchboardFailure.currentUnknown
-                }
-                try await service.logout(account) {
-                    DispatchQueue.main.sync {
-                        MainActor.assumeIsolated {
-                            desktop.observe() == observed && RemovalPolicy.allows(account, desktop: observed, identity: identity)
-                        }
-                    }
-                }
-                let updated = accounts.filter { $0.id != account.id }
-                try store.save(updated)
-                accounts = updated; states.removeValue(forKey: account.id)
-                await refresh()
-            } catch { reportFailure(error, operation: .removeAccount); await refresh() }
-        }
+        Task { await runtime.remove(account.id); synchronize() }
+    }
+    func recover() {
+        guard let runtime, !runtime.busy else { return }
+        busyText = "Recovering…"; notice = nil
+        Task { await runtime.recover(); synchronize(); if !runtime.failed { refreshClicked() } }
     }
 
     // Called only after a user-initiated refresh finishes. An action's own
@@ -277,7 +136,8 @@ final class PanelModel: ObservableObject {
             default: break
             }
             category = String(describing: failure)
-        } else if let failure = error as? SharingFailure { category = String(describing: failure) }
+        } else if let failure = error as? AccountFailure { category = String(describing: failure) }
+        else if let failure = error as? SharingFailure { category = String(describing: failure) }
         else if let failure = error as? ChatSharingFailure { category = String(describing: failure) }
         else { category = "unexpected-error" }
         // Only fixed operation labels, error cases, and numeric protocol codes.
@@ -290,17 +150,18 @@ final class PanelModel: ObservableObject {
     private func friendly(_ error: Error) -> String {
         if let chat = error as? ChatSharingFailure { return chat.localizedDescription }
         if let sharing = error as? SharingFailure { return sharing.localizedDescription }
+        if let runtime = error as? AccountFailure { return runtime.localizedDescription }
         return (error as? SwitchboardFailure)?.localizedDescription ?? "The operation could not be completed."
     }
 
     static func preview(accountCount: Int = 2, loading: Bool = false, refreshingCached: Bool = false) -> PanelModel {
-        let model = PanelModel()
+        let model = PanelModel(loadRuntime: false)
         let a = SavedAccount(home: "/tmp/preview-a", email: "alex@example.com", plan: "pro")
         let b = SavedAccount(home: "/tmp/preview-b", email: "work@example.com", plan: "business")
         model.accounts = [a, b]; model.currentID = a.id
         model.presence = .running(pid: 1, home: a.home)
         model.currentIdentity = Identity(email: a.email, plan: a.plan)
-        model.loaded = true
+        model.loaded = true; model.storageReady = true
         let data = Data("""
         {"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":28,"windowDurationMins":300,"resetsAt":1893459600},"secondary":{"usedPercent":54,"windowDurationMins":10080,"resetsAt":1893718800}}},"rateLimitResetCredits":{"availableCount":2,"credits":[{"title":"Weekly reset","status":"available","expiresAt":1893546000},{"title":"Bonus reset","status":"available","expiresAt":1893805200}]}}
         """.utf8)

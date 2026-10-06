@@ -2,6 +2,7 @@ import AppKit
 import Darwin
 import SwiftUI
 import SwitchboardCore
+import AccountRuntime
 
 @main
 enum Main {
@@ -13,33 +14,23 @@ enum Main {
             app.run()
             return
         }
-        if CommandLine.arguments.contains("--check-sharing") {
+        if CommandLine.arguments.contains("--migrate") || CommandLine.arguments.contains("--verify-runtime") {
             Task {
                 do {
-                    let desktop = try Desktop()
-                    let before = desktop.observe()
-                    let accounts = try AccountStore().load() ?? []
-                    let plan = try await SharedSetupService(executable: desktop.executable)
-                        .prepare(accounts: accounts, currentHome: before.home)
-                    print("Shared setup preflight: accounts=\(accounts.count), customMCP=\(plan.serverCount), projects=\(plan.projectCount), conflicts=\(plan.conflicts.count)")
-                    for index in accounts.indices {
-                        let visible = plan.desktopProjectCounts[index].map(String.init) ?? "uninitialized"
-                        print("Account \(index + 1) projects: backend=\(plan.backendProjectCounts[index]), desktop=\(visible)")
+                    let runtime = try AccountController()
+                    if CommandLine.arguments.contains("--migrate") {
+                        await runtime.migrateLegacy()
+                        print(runtime.message)
+                    } else {
+                        let before = runtime.presence
+                        await runtime.refresh()
+                        print("Accounts: \(runtime.accounts.count), available usage: \(runtime.readings.values.filter { $0.usage != nil }.count), current verified: \(runtime.current != nil), desktop unchanged: \(runtime.presence == before)")
+                        if runtime.failed { print(runtime.message) }
                     }
-                    let chats = try await SharedSetupService(executable: desktop.executable).chatPreflight(plan)
-                    print("Project chats: perAccount=\(chats.perHome), unique=\(chats.unique), bytes=\(chats.bytes)")
-                    print("Desktop unchanged: \(before == desktop.observe())")
-                } catch { print("Shared setup preflight failed: \(error.localizedDescription)") }
-                app.terminate(nil)
+                    exit(runtime.failed ? 1 : 0)
+                } catch { print(error.localizedDescription); exit(1) }
             }
-            app.run()
-            return
-        }
-        if let index = CommandLine.arguments.firstIndex(of: "--check") {
-            let homes = Array(CommandLine.arguments.dropFirst(index + 1))
-            Task { await check(homes: homes); app.terminate(nil) }
-            app.run()
-            return
+            app.run(); return
         }
         if let index = CommandLine.arguments.firstIndex(of: "--render-preview"), CommandLine.arguments.count > index + 1 {
             renderPreview(path: CommandLine.arguments[index + 1]); return
@@ -47,25 +38,6 @@ enum Main {
         let delegate = StatusBarDelegate()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }
-    }
-
-    @MainActor private static func check(homes: [String]) async {
-        do {
-            let desktop = try Desktop()
-            let service = CodexService(executable: desktop.executable)
-            let before = desktop.observe()
-            print("Desktop environment readable: \(before.home != nil)")
-            let targets = homes.isEmpty ? (try AccountStore().load() ?? []).map(\.home) : homes
-            var emails = Set<String>()
-            for (index, home) in targets.enumerated() {
-                let reading = await service.read(home: home)
-                if let identity = reading.identity { emails.insert(identity.email.lowercased()) }
-                let expiryCount = reading.usage?.resetCredits?.filter { if case .at = $0.expiry { return true }; return false }.count ?? 0
-                print("Account \(index + 1): identity=\(reading.identity != nil), usage=\(reading.usage != nil), windows=\(reading.usage?.quotas.count ?? 0), resetCount=\(reading.usage?.resetCount != nil), resetDetails=\(reading.usage?.resetCredits?.count ?? 0), datedCredits=\(expiryCount), loginRequired=\(reading.needsLogin)")
-            }
-            print("Distinct identities: \(emails.count)")
-            print("Desktop unchanged: \(desktop.observe() == before)")
-        } catch { print("Read-only check failed: \(error.localizedDescription)") }
     }
 
     @MainActor private static func renderPreview(path: String) {

@@ -8,16 +8,20 @@ do not copy its code or expand the approved feature set.
 
 Use official Codex App Server requests for identity, usage, login, and logout.
 Never read, copy, or log Codex authentication secrets or OAuth credential stores.
-Exception approved on 2026-10-06: the separate fixed-home preview may manage opaque
-login caches created through its own official login flow, exclusively inside
-its private Preview data directory and its own Keychain service. Never import
-credentials from existing account homes, print secrets, or include them in Git.
-The preview shares all of its local chats. It must not migrate existing chats,
-modify production homes, or replace the installed 0.3.3 app. Real desktop
-switches remain user-triggered; automated checks use disposable fixtures.
+Exception approved on 2026-10-06 after successful preview acceptance: production
+0.4 may manage opaque account login caches in its own Keychain service and the
+single fixed work Home. The user authorized the production replacement, one-time
+migration, and temporary-file cleanup. Migration may import existing accounts'
+caches without printing, decoding tokens, or committing secrets. Keep recovery
+data private. Adopt the existing primary Home; import missing local chats through
+official resume APIs, never merge entire databases. All local chats are shared.
+Remove preview/build/test artifacts only after verification; preserve actual
+account homes, chat data, and necessary recovery backups. Real desktop switches
+remain user-triggered; automated checks use disposable fixtures.
 User-configured MCP definitions can include API keys; keep shared definitions and
 configuration backups private (0700 directories, 0600 files), never print them.
-Share custom MCP definitions and project registrations through the approved
+The following describes the legacy 0.3 migration helpers only; never call them
+as part of routine 0.4 account switching. Share custom MCP definitions and project registrations through the approved
 shared registry and App Server APIs. The sidebar also requires a narrow update of
 project fields in .codex-global-state.json while the desktop is stopped. Preserve
 unrelated fields, existing local project IDs, and chat associations; back up only

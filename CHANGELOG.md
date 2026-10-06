@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 — 2026-10-07
+
+- Promote the user-accepted fixed-home workflow into the existing menu bar app.
+- Keep projects, all local chats, and MCP configuration in one work home; switch only login caches.
+- Store inactive caches in a dedicated Keychain service and retain official login and refresh behavior.
+- Add one-time legacy migration with private recovery records and additive standalone-chat import.
+- Preserve current-account removal protection, official logout, usage caching, and existing menu styling.
+- Support active-account re-login and recover interrupted switches or removals without regressing refreshed caches.
+- Remove the separate preview app target and build script after integration.
+
 ## 0.4.0-preview.1 — 2026-10-06
 
 - Add a separate fixed-home validation app; keep the installed 0.3.3 production app unchanged.

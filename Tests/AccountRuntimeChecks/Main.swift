@@ -1,14 +1,14 @@
 import Darwin
 import Foundation
 @testable import SwitchboardCore
-@testable import PreviewCore
+@testable import AccountRuntime
 
 final class MemoryVault: CredentialVault {
     var entries: [String: Data] = [:]
     var failWrites = false
     func read(_ name: String) throws -> Data? { entries[name] }
     func write(_ data: Data, name: String) throws {
-        if failWrites { throw PreviewError.keychain }
+        if failWrites { throw AccountFailure.keychain }
         entries[name] = data
     }
     func remove(_ name: String) throws { entries.removeValue(forKey: name) }
@@ -23,14 +23,18 @@ func decode(_ data: Data?) -> (String, Int)? {
     return (label, revision)
 }
 func check(_ result: @autoclosure () throws -> Bool, _ name: String) throws {
-    if try !result() { throw NSError(domain: "PreviewChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: name]) }
+    if try !result() { throw NSError(domain: "AccountRuntimeChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: name]) }
 }
 
 @MainActor
-final class FakeRuntime: PreviewRuntime {
+final class FakeRuntime: RuntimeBackend {
     var presence: DesktopPresence = .running(pid: 1, home: "/synthetic-original-home")
     var nextLogin = "a"
     var loginFails = false
+    var loginRevision = 1
+    var logoutFails = false
+    var beforeLogout: (() throws -> Void)?
+    var logouts = 0
     var failPolicy = false
     var writers = false
     var legacy = false
@@ -41,12 +45,13 @@ final class FakeRuntime: PreviewRuntime {
     var rotateOnRead = false
     var afterQuit: (() throws -> Void)?
     var launches: [String] = []
-    func validate(home: String) async throws { if failPolicy { throw PreviewError.policy } }
+    func validate(home: String) async throws { if failPolicy { throw AccountFailure.policy } }
     func read(home: String) async -> Reading {
         if home == readFailureHome { return Reading(identity: nil, usage: nil) }
-        if home == invalidateHome { return Reading(identity: nil, usage: nil, needsLogin: true) }
+
         let url = URL(fileURLWithPath: home).appendingPathComponent("auth.json")
         guard let pair = decode(try? PrivateFile.read(url)) else { return Reading(identity: nil, usage: nil, needsLogin: true) }
+        if home == invalidateHome && pair.1 < 10 { return Reading(identity: nil, usage: nil, needsLogin: true) }
         if rotateOnRead { try? PrivateFile.write(fixture(pair.0, revision: pair.1 + 1), to: url) }
         let label = home == wrongIdentityHome ? "wrong" : pair.0
         let usage = try? UsageDecoder.decode(Data(#"{"rateLimits":{"primary":{"usedPercent":20,"windowDurationMins":300}}}"#.utf8))
@@ -54,8 +59,15 @@ final class FakeRuntime: PreviewRuntime {
     }
     func login(home: String, cancellation: CancellationFlag) async throws -> Identity {
         if loginFails { throw SwitchboardFailure.loginCancelled }
-        try PrivateFile.write(fixture(nextLogin), to: URL(fileURLWithPath: home).appendingPathComponent("auth.json"))
+        try PrivateFile.write(fixture(nextLogin, revision: loginRevision), to: URL(fileURLWithPath: home).appendingPathComponent("auth.json"))
         return Identity(email: nextLogin + "@example.test", plan: "plus")
+    }
+    func logout(home: String, email: String, stillNonCurrent: @escaping @MainActor () -> Bool) async throws {
+        try beforeLogout?(); beforeLogout = nil
+        if logoutFails { throw SwitchboardFailure.unavailable }
+        guard stillNonCurrent() else { throw SwitchboardFailure.currentUnknown }
+        logouts += 1
+        try PrivateFile.remove(URL(fileURLWithPath: home).appendingPathComponent("auth.json"))
     }
     func activate(home: String, change: @escaping () async throws -> Void) async throws {
         let before = presence
@@ -70,21 +82,21 @@ final class FakeRuntime: PreviewRuntime {
             throw error
         }
     }
-    func quiescent(home: String) async throws { if writers { throw PreviewError.writers } }
-    func checkLegacy() throws { if legacy { throw PreviewError.legacyApp } }
+    func quiescent(home: String) async throws { if writers { throw AccountFailure.writers } }
+    func checkLegacy() throws { if legacy { throw AccountFailure.legacyApp } }
 }
 
 @MainActor
 struct Harness {
     let root: URL
     let vault: MemoryVault
-    let store: PreviewStore
+    let store: RuntimeStore
     let runtime: FakeRuntime
-    let controller: PreviewController
+    let controller: AccountController
     init() throws {
-        root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("switchboard-preview-check-" + UUID().uuidString)
-        vault = MemoryVault(); store = try PreviewStore(root: root, vault: vault)
-        runtime = FakeRuntime(); controller = try PreviewController(store: store, runtime: runtime)
+        root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("switchboard-runtime-check-" + UUID().uuidString)
+        vault = MemoryVault(); store = try RuntimeStore(root: root, vault: vault)
+        runtime = FakeRuntime(); controller = try AccountController(store: store, runtime: runtime)
     }
     func clean() { try? FileManager.default.removeItem(at: root) }
     func twoAccounts() async throws -> (UUID, UUID) {
@@ -98,7 +110,7 @@ struct Harness {
 }
 
 @main
-struct PreviewChecks {
+struct AccountRuntimeChecks {
     @MainActor static func main() async {
         let tests: [(String, () async throws -> Void)] = [
             ("fixed home A-B-A and latest active cache", roundTrip),
@@ -110,16 +122,27 @@ struct PreviewChecks {
             ("completed worker cleanup is idempotent", cleanupRecovery),
             ("cancelled and mismatched login preserve accounts", cancelledLogin),
             ("policy, writer and legacy app guards", guards),
-            ("offline return and active reauthentication", renewal),
+            ("active reauthentication replaces only credentials", renewal),
+            ("renewal launch failure preserves latest login for recovery", renewalRecovery),
+            ("current account removal blocked and other account logged out", removal),
+            ("interrupted removal and identity race remain safe", removalRecovery),
+            ("last non-current account can be removed", removeLast),
             ("private files reject symlinks and duplicate instances", privateStorage)
         ]
         do {
+            if let i = CommandLine.arguments.firstIndex(of: "--migration-fixture"), CommandLine.arguments.count == i + 5 {
+                let args = CommandLine.arguments
+                let count = try await LocalHistoryMigration.importMissing(executable: URL(fileURLWithPath: args[i+1]),
+                    target: args[i+2], sources: [args[i+3]], backup: URL(fileURLWithPath: args[i+4]))
+                print("Imported local chats: \(count)")
+                return
+            }
             for (name, test) in tests { try await test(); print("PASS: \(name)") }
             if let index = CommandLine.arguments.firstIndex(of: "--integration-cli"), CommandLine.arguments.count > index + 1 {
                 try await installedCLI(URL(fileURLWithPath: CommandLine.arguments[index + 1]))
                 print("PASS: installed CLI authentication, fixed project registry, and private Keychain round-trip")
             }
-            print("\(tests.count) preview checks passed. No real credentials or desktop sessions were used.")
+            print("\(tests.count) runtime checks passed. No real credentials or desktop sessions were used.")
         } catch { print("FAIL: \(error.localizedDescription)"); exit(1) }
     }
     @MainActor static func roundTrip() async throws {
@@ -139,8 +162,6 @@ struct PreviewChecks {
         try check(decode(try h.store.credential(h.store.home))?.1 == 9, "newest A restored")
         try check(try PrivateFile.read(sentinel) == content, "chat unchanged")
         try check(h.runtime.launches.allSatisfy { $0 == h.store.home.path }, "one fixed home")
-        await h.controller.returnToOriginal()
-        try check(h.runtime.presence.home == "/synthetic-original-home" && h.controller.current == nil, "original restored")
         try check(try h.store.load().switching == nil, "no remaining transaction")
     }
     @MainActor static func workerRefresh() async throws {
@@ -201,7 +222,7 @@ struct PreviewChecks {
         var worker = WorkerJournal(id: UUID(), accountID: nil, login: true, materialized: false)
         worker.completed = true; state.worker = worker
         try h.store.save(state)
-        let reloaded = try PreviewController(store: h.store, runtime: h.runtime)
+        let reloaded = try AccountController(store: h.store, runtime: h.runtime)
         await reloaded.recover()
         try check(!reloaded.needsRecovery && !reloaded.failed, "missing completed worker directory is harmless")
     }
@@ -231,19 +252,59 @@ struct PreviewChecks {
     @MainActor static func renewal() async throws {
         let h = try Harness(); defer { h.clean() }
         let (a,_) = try await h.twoAccounts(); await h.controller.switchTo(a)
-        h.runtime.readFailureHome = h.store.home.path
-        await h.controller.returnToOriginal()
-        try check(!h.controller.failed, "offline return")
-        h.runtime.readFailureHome = nil; h.runtime.invalidateHome = h.store.home.path
-        h.runtime.nextLogin = "a"; await h.controller.addAccount(replacing: a)
-        try check(!h.controller.failed, "renew outside test environment")
-        h.runtime.invalidateHome = nil; await h.controller.switchTo(a)
-        try check(!h.controller.failed && h.controller.current == a, "open renewed login")
+        h.runtime.invalidateHome = h.store.home.path
+        h.runtime.nextLogin = "a"; h.runtime.loginRevision = 10
+        await h.controller.addAccount(replacing: a)
+        try check(!h.controller.failed && h.controller.current == a, "renew current without leaving fixed home")
+        try check(decode(try h.store.credential(h.store.home))?.1 == 10, "new login installed")
+        try check(!h.controller.needsRecovery, "renewal completed")
+    }
+    @MainActor static func renewalRecovery() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,_) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        h.runtime.nextLogin = "a"; h.runtime.loginRevision = 10
+        h.runtime.rotateOnRead = true; h.runtime.launchFailures = 1
+        await h.controller.addAccount(replacing: a)
+        try check(h.controller.failed && h.controller.needsRecovery, "interrupted renewal journal retained")
+        let revision = decode(try h.store.credential(h.store.home))!.1
+        await h.controller.recover()
+        try check(!h.controller.failed && !h.controller.needsRecovery, "renewal recovery")
+        try check(decode(try h.store.credential(h.store.home))!.1 >= revision, "renewed cache never regressed")
+    }
+    @MainActor static func removal() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        await h.controller.remove(a)
+        try check(h.controller.failed && h.runtime.logouts == 0 && h.controller.accounts.count == 2, "current removal blocked")
+        await h.controller.remove(b)
+        try check(!h.controller.failed && h.runtime.logouts == 1 && h.controller.accounts.count == 1, "non-current logged out")
+        try check(h.vault.entries[b.uuidString] == nil && decode(try h.store.credential(h.store.home))?.0 == "a", "active login preserved")
+    }
+    @MainActor static func removalRecovery() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        h.runtime.logoutFails = true; await h.controller.remove(b)
+        try check(h.controller.needsRecovery && h.controller.accounts.count == 2, "logout failure retains account")
+        h.runtime.logoutFails = false
+        h.runtime.beforeLogout = { try h.store.install(fixture("b"), in: h.store.home) }
+        await h.controller.recover()
+        try check(h.controller.failed && h.runtime.logouts == 0, "identity race blocked before logout")
+        await h.controller.recover()
+        try check(!h.controller.needsRecovery && h.controller.accounts.count == 2, "now-current target retained")
+    }
+    @MainActor static func removeLast() async throws {
+        let h = try Harness(); defer { h.clean() }
+        await h.controller.addAccount()
+        let a = h.controller.accounts[0].id
+        try h.store.install(fixture("unregistered"), in: h.store.home)
+        h.runtime.presence = .running(pid: 2, home: h.store.home.path)
+        await h.controller.refresh(); await h.controller.remove(a)
+        try check(!h.controller.failed && h.controller.accounts.isEmpty && h.runtime.logouts == 1, "last non-current removed")
     }
     @MainActor static func privateStorage() async throws {
         let h = try Harness(); defer { h.clean() }
         var blocked = false
-        do { _ = try PreviewStore(root: h.root, vault: MemoryVault()) } catch { blocked = true }
+        do { _ = try RuntimeStore(root: h.root, vault: MemoryVault()) } catch { blocked = true }
         try check(blocked, "duplicate instance blocked")
         let outside = h.root.appendingPathComponent("untouched.json")
         try PrivateFile.write(fixture("outside"), to: outside)
@@ -259,7 +320,7 @@ struct PreviewChecks {
     }
     @MainActor static func installedCLI(_ executable: URL) async throws {
         let h = try Harness(); defer { h.clean() }
-        try await PreviewBackend.validateConfiguration(executable: executable, home: h.store.home.path)
+        try await AuthBackend.validateConfiguration(executable: executable, home: h.store.home.path)
         let vault = KeychainVault(), name = "fixture-" + UUID().uuidString
         defer { try? vault.remove(name) }
         var projectBaseline: Data?
@@ -268,10 +329,10 @@ struct PreviewChecks {
             defer { rpc.close() }
             _ = try rpc.request("account/login/start", params: ["type": "apiKey", "apiKey": "sk-synthetic-preview-A-invalid"])
             _ = try rpc.request("project/create", params: ["idempotencyKey": UUID().uuidString,
-                "name": "Synthetic preview project", "roots": [["path": h.store.project.path]]])
+                "name": "Synthetic preview project", "roots": [["path": h.store.home.path]]])
             projectBaseline = try JSONSerialization.data(withJSONObject: rpc.request("project/list"), options: [.sortedKeys])
         }
-        guard let first = try h.store.credential(h.store.home) else { throw PreviewError.storage }
+        guard let first = try h.store.credential(h.store.home) else { throw AccountFailure.storage }
         try vault.write(first, name: name)
         do {
             let rpc = try RPCConnection(executable: executable, home: h.store.home.path)

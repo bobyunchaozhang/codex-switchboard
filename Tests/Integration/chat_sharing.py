@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exercise production sharing against disposable homes and a loopback model only."""
-import pathlib, tempfile, json, threading, http.server, time, shutil, subprocess, os, queue, sqlite3, uuid
+import pathlib, tempfile, json, threading, http.server, time, shutil, subprocess, os, queue, sqlite3, uuid, sys
 root = pathlib.Path(__file__).resolve().parents[2]
 binary = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex'
 r = pathlib.Path(tempfile.mkdtemp(prefix='switchboard-chat-check-')).resolve()
@@ -95,6 +95,30 @@ def listed(client, archived=False):
 
 def items(client, tid):
     return json.dumps(client.call('thread/items/list', {'threadId': tid, 'limit': 100}))
+
+if '--migration' in sys.argv:
+    try:
+        original = make_chat('a', None, 'MIGRATION_ORIGINAL_CONTEXT', 'Migration source')
+        archived = make_chat('a', None, 'MIGRATION_ARCHIVED_CONTEXT', 'Migration archive')
+        a = openrpc('a'); a.call('thread/archive', {'threadId': archived['id']}); close(a)
+        original_data = pathlib.Path(original['path']).read_bytes()
+        for _ in range(2):
+            result = subprocess.run([str(root / '.build/debug/AccountRuntimeChecks'), '--migration-fixture', binary,
+                str(r/'b'), str(r/'a'), str(r/'backup')], capture_output=True, text=True)
+            assert result.returncode == 0, result.stdout + result.stderr
+        b = openrpc('b')
+        assert {t['id'] for t in listed(b)} == {original['id']}
+        assert {t['id'] for t in listed(b, True)} == {archived['id']}
+        assert 'MIGRATION_ORIGINAL_CONTEXT' in items(b, original['id'])
+        assert pathlib.Path(original['path']).read_bytes() == original_data
+        receipt = json.loads((r/'backup/history-import.json').read_text())
+        assert set(receipt['importedThreadIDs']) == {original['id'], archived['id']}
+        print('PASS: additive migration preserves history, archives, source files, and retry receipts')
+    finally:
+        for c in clients: c.close()
+        server.shutdown(); server.server_close()
+        shutil.rmtree(r)
+    sys.exit(0)
 
 try:
     a = openrpc('a'); pa = project(a, 'a-project'); close(a)

@@ -19,3 +19,7 @@ __pycache__/
 /accounts.json
 /Shared/
 /Accounts/
+
+# Private account runtime and recovery data
+/Runtime/
+/Recovery/
