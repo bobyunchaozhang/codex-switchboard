@@ -48,36 +48,13 @@ final class InstalledRuntime: RuntimeBackend {
     }
     func quiescent(home: String) async throws {
         let deadline = Date().addingTimeInterval(6)
+        var blocked: [CredentialWriters.Entry] = []
         repeat {
-            if try !hasWriter(home: home) { return }
+            blocked = try CredentialWriters.blockers(in: CredentialWriters.inventory(), home: home,
+                application: desktop.application, cli: desktop.executable)
+            if blocked.isEmpty { return }
             try await Task.sleep(nanoseconds: 200_000_000)
         } while Date() < deadline
-        throw AccountFailure.writers
-    }
-    private func hasWriter(home: String) throws -> Bool {
-        // Process names only: never request command arguments or environment dumps.
-        let process = Process(), pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-U", String(getuid()), "-o", "pid=,comm="]
-        process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0, let output = String(data: data, encoding: .utf8) else {
-            throw AccountFailure.writers
-        }
-        for line in output.split(separator: "\n") {
-            let fields = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
-            guard fields.count == 2, let pid = Int32(fields[0]), pid != getpid() else { continue }
-            let name = fields[1].lowercased()
-            guard name.contains("codex") || name.contains("chatgpt.app/") else { continue }
-            guard let observed = ProcessHome.read(pid: pid) else {
-                // Exited processes are harmless; a live unreadable process is not.
-                if kill(pid, 0) == 0 { return true }
-                continue
-            }
-            if observed == normalizedHome(home) { return true }
-        }
-        return false
+        throw CredentialWriterBusy(pids: blocked.map(\.pid))
     }
 }

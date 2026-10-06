@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 — 2026-10-07
+
+- Fix false switch blockers caused by Chrome plugins and other helper processes inheriting the main Codex home.
+- Recognize credential-owning desktop and CLI executables instead of matching Codex anywhere in a process path.
+- Keep real CLI and unreadable live-owner protections; report blocking process IDs on timeout.
+- Add classifier coverage and real disposable-process regression checks without restarting the user's Codex.
+
 ## 0.4.0 — 2026-10-07
 
 - Promote the user-accepted fixed-home workflow into the existing menu bar app.

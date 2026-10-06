@@ -122,6 +122,8 @@ struct AccountRuntimeChecks {
             ("completed worker cleanup is idempotent", cleanupRecovery),
             ("cancelled and mismatched login preserve accounts", cancelledLogin),
             ("policy, writer and legacy app guards", guards),
+            ("credential owners exclude plugins and helpers", writerClassification),
+            ("live process guard distinguishes inherited home from credential owner", liveWriters),
             ("active reauthentication replaces only credentials", renewal),
             ("renewal launch failure preserves latest login for recovery", renewalRecovery),
             ("current account removal blocked and other account logged out", removal),
@@ -248,6 +250,59 @@ struct AccountRuntimeChecks {
         h.runtime.writers = true; await h.controller.switchTo(b)
         try check(h.controller.failed, "writer guard")
         try check(decode(try h.store.credential(h.store.home))?.0 == "a", "writer guard kept A")
+    }
+    @MainActor static func writerClassification() async throws {
+        let app = URL(fileURLWithPath: "/Applications/ChatGPT.app")
+        let cli = app.appendingPathComponent("Contents/Resources/codex-cli/bin/codex")
+        let paths = [
+            "/Users/example/Library/Application Support/Codex Switchboard/Proof-B/plugins/ChatGPT for Chrome",
+            "/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/browser_crashpad_handler",
+            "/Applications/ChatGPT.app/Contents/Frameworks/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+            "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node",
+            "/Users/example/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex-code-mode-host",
+            "/Applications/Codex Switchboard.app/Contents/MacOS/CodexSwitchboard",
+            "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "/opt/homebrew/bin/codex"
+        ]
+        let entries = paths.enumerated().map { CredentialWriters.Entry(pid: Int32($0.offset + 1), executable: $0.element) }
+        let sameHome = CredentialWriters.blockers(in: entries, home: "/fixture", application: app, cli: cli,
+            ownPID: 100, readHome: { _ in "/fixture" }, isAlive: { _ in true })
+        try check(sameHome.map(\.pid) == [8,9,10], "only desktop and real CLI names are owners")
+        let others = CredentialWriters.blockers(in: entries, home: "/fixture", application: app, cli: cli,
+            ownPID: 8, readHome: { pid in pid == 9 ? nil : "/other" }, isAlive: { _ in true })
+        try check(others.map(\.pid) == [9], "unknown live owner fails closed; other home and self ignored")
+        let exited = CredentialWriters.blockers(in: entries, home: "/fixture", application: app, cli: cli,
+            readHome: { _ in nil }, isAlive: { _ in false })
+        try check(exited.isEmpty, "exited process does not block")
+    }
+    @MainActor static func liveWriters() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let app = h.root.appendingPathComponent("ChatGPT.app")
+        let helperURL = app.appendingPathComponent("Contents/Frameworks/browser_crashpad_handler")
+        let cli = h.root.appendingPathComponent("codex")
+        try FileManager.default.createDirectory(at: helperURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for url in [helperURL, cli] { try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: url) }
+        var processes: [Process] = []
+        defer { for process in processes where process.isRunning { process.terminate(); process.waitUntilExit() } }
+        func start(_ url: URL, home: String) throws -> Process {
+            let p = Process(); p.executableURL = url; p.arguments = ["60"]
+            p.environment = ["HOME": h.root.path, "CODEX_HOME": home]
+            try p.run(); processes.append(p); return p
+        }
+        let helper = try start(helperURL, home: h.store.home.path)
+        let owner = try start(cli, home: h.store.home.path)
+        let other = try start(cli, home: h.root.appendingPathComponent("Other").path)
+        let ids = Set([helper.processIdentifier, owner.processIdentifier, other.processIdentifier])
+        let inventory = try CredentialWriters.inventory().filter { ids.contains($0.pid) }
+        try check(inventory.count == 3, "actual process inventory found fixtures")
+        let blocked = CredentialWriters.blockers(in: inventory, home: h.store.home.path, application: app, cli: cli)
+        try check(blocked.map(\.pid) == [owner.processIdentifier], "inherited home alone does not make helper an owner")
+        owner.terminate(); owner.waitUntilExit()
+        let remaining = try CredentialWriters.inventory().filter { ids.contains($0.pid) }
+        try check(CredentialWriters.blockers(in: remaining, home: h.store.home.path, application: app, cli: cli).isEmpty,
+            "guard releases after real owner stops even with helper still running")
     }
     @MainActor static func renewal() async throws {
         let h = try Harness(); defer { h.clean() }
