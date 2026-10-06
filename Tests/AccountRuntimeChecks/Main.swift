@@ -39,6 +39,7 @@ final class FakeRuntime: RuntimeBackend {
     var writers = false
     var legacy = false
     var launchFailures = 0
+    var onRead: ((String) throws -> Void)?
     var readFailureHome: String?
     var wrongIdentityHome: String?
     var invalidateHome: String?
@@ -47,6 +48,7 @@ final class FakeRuntime: RuntimeBackend {
     var launches: [String] = []
     func validate(home: String) async throws { if failPolicy { throw AccountFailure.policy } }
     func read(home: String) async -> Reading {
+        do { try onRead?(home) } catch { fatalError(error.localizedDescription) }
         if home == readFailureHome { return Reading(identity: nil, usage: nil) }
 
         let url = URL(fileURLWithPath: home).appendingPathComponent("auth.json")
@@ -115,6 +117,7 @@ struct AccountRuntimeChecks {
         let tests: [(String, () async throws -> Void)] = [
             ("fixed home A-B-A and latest active cache", roundTrip),
             ("worker refresh is saved before switch", workerRefresh),
+            ("healthy journals do not appear as interrupted operations", healthyOperationState),
             ("launch failure restores previous login", launchFailure),
             ("failed rollback leaves recoverable journal", failedRollback),
             ("unexpected target identity blocks acceptance", wrongIdentity),
@@ -178,6 +181,23 @@ struct AccountRuntimeChecks {
         await h.controller.switchTo(b)
         try check(!h.controller.failed, "switch after refresh")
         try check((decode(try h.store.credential(h.store.home))?.1 ?? 0) >= 3, "newest B activated")
+    }
+    @MainActor static func healthyOperationState() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        var checkedWorker = false
+        h.runtime.onRead = { home in
+            guard home != h.store.home.path else { return }
+            checkedWorker = true
+            try check(try h.store.load().worker != nil, "fixture exercises a persisted live worker")
+            try check(h.controller.busy && !h.controller.needsRecovery, "live work is not an interrupted operation")
+            try check(h.controller.current == a, "checking another account preserves the verified current badge")
+        }
+        await h.controller.refresh()
+        try check(checkedWorker && !h.controller.failed, "refresh reached the transient journal")
+        checkedWorker = false
+        await h.controller.switchTo(b)
+        try check(checkedWorker && !h.controller.failed && h.controller.current == b, "preflight and switch complete normally")
     }
     @MainActor static func launchFailure() async throws {
         let h = try Harness(); defer { h.clean() }

@@ -7,6 +7,7 @@ import SwitchboardCore
 enum PanelLayoutChecks {
     static func run() async {
         checkNoticeRecovery()
+        checkStatusTiming()
         let model = PanelModel.preview()
         let host = NSHostingController(rootView: AnyView(PanelView(model: model, quit: {})))
         host.sizingOptions = [.preferredContentSize]
@@ -18,6 +19,9 @@ enum PanelLayoutChecks {
             ("Loading", .preview(loading: true), nil),
             ("Accounts", model, nil),
             ("Refreshing cached accounts", .preview(refreshingCached: true), nil),
+            ("Checking target", .preview(checkingAccount: true, currentVerified: false), nil),
+            ("Interrupted operation", .preview(interrupted: true), nil),
+            ("Recovery running", .preview(checkingAccount: true, interrupted: true), nil),
             ("Duplicate login", model, "This account has already been added."),
             ("Dismissed notice", model, nil),
             ("Expanded reset credits", .preview(), nil),
@@ -49,6 +53,21 @@ enum PanelLayoutChecks {
         }
         window.contentViewController = nil
         print("Hosted panel layout checks passed")
+    }
+
+    private static func checkStatusTiming() {
+        precondition(PanelModel.preview().currentStatus == nil)
+        precondition(PanelModel.preview(loading: true).currentStatus == nil)
+        precondition(PanelModel.preview(checkingAccount: true, currentVerified: false).currentStatus == nil,
+                     "Preflight must not claim that the current account is missing")
+        precondition(PanelModel.preview(currentVerified: false).currentStatus == "Current account unknown",
+                     "An added account without a Current badge is not an unregistered account")
+        precondition(PanelModel.preview(accountCount: 0).currentStatus == "Current account is not added")
+        precondition(!PanelModel.preview(checkingAccount: true, interrupted: true).showRecovery,
+                     "No recovery action while work is running")
+        precondition(PanelModel.preview(interrupted: true).showRecovery,
+                     "An idle unfinished operation still offers recovery")
+        print("Status timing checks passed")
     }
 
     private static func checkNoticeRecovery() {

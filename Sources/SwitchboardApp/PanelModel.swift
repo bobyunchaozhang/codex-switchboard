@@ -34,9 +34,13 @@ final class PanelModel: ObservableObject {
     private var observer: AnyCancellable?
     private let logger = Logger(subsystem: "local.codex-switchboard.app", category: "operations")
     var canAct: Bool { loaded && storageReady && !refreshing && busyText == nil && !needsRecovery }
-    var currentStatus: String {
+    var showRecovery: Bool { needsRecovery && !refreshing && busyText == nil }
+    var currentStatus: String? {
+        guard !refreshing, busyText == nil, !needsRecovery, currentID == nil else { return nil }
         if presence == .stopped { return "Codex is not running" }
-        return currentIdentity == nil ? "Current account unknown" : "Current account is not added"
+        guard presence != .unknown, let identity = currentIdentity else { return "Current account unknown" }
+        return accounts.contains(where: { identity.matches($0.email) })
+            ? "Current account unknown" : "Current account is not added"
     }
 
     init(loadRuntime: Bool = true) {
@@ -154,7 +158,7 @@ final class PanelModel: ObservableObject {
         return (error as? SwitchboardFailure)?.localizedDescription ?? "The operation could not be completed."
     }
 
-    static func preview(accountCount: Int = 2, loading: Bool = false, refreshingCached: Bool = false) -> PanelModel {
+    static func preview(accountCount: Int = 2, loading: Bool = false, refreshingCached: Bool = false, checkingAccount: Bool = false, interrupted: Bool = false, currentVerified: Bool = true) -> PanelModel {
         let model = PanelModel(loadRuntime: false)
         let a = SavedAccount(home: "/tmp/preview-a", email: "alex@example.com", plan: "pro")
         let b = SavedAccount(home: "/tmp/preview-b", email: "work@example.com", plan: "business")
@@ -184,6 +188,9 @@ final class PanelModel: ObservableObject {
             for account in model.accounts { model.states[account.id] = .loading }
         }
         if refreshingCached { model.beginRefresh(observed: model.presence) }
+        if !currentVerified { model.currentID = nil }
+        if checkingAccount { model.busyText = "Checking the target account…" }
+        if interrupted { model.needsRecovery = true; model.currentID = nil }
         return model
     }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2 — 2026-10-07
+
+- Show recovery only for unfinished operations after active work has stopped.
+- Preserve the verified Current badge during quota reads and switch preflight.
+- Hide premature identity messages during active work and check actual list membership before reporting an unregistered account.
+- Cover transient controller journals and menu status timing in regression checks.
+
 ## 0.4.1 — 2026-10-07
 
 - Fix false switch blockers caused by Chrome plugins and other helper processes inheriting the main Codex home.

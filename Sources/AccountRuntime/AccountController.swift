@@ -34,8 +34,9 @@ public final class AccountController: ObservableObject {
     }
     private func publish() {
         accounts = state.accounts
-        needsRecovery = state.worker != nil || state.switching != nil || state.renewal != nil
-        if runtime.presence.home != store.home.path || needsRecovery { current = nil }
+        // Journals also exist during healthy operations; recovery is only actionable when idle.
+        needsRecovery = !busy && (state.worker != nil || state.switching != nil || state.renewal != nil)
+        if runtime.presence.home != store.home.path || state.switching != nil || needsRecovery { current = nil }
     }
     private func account(_ id: UUID) throws -> AccountProfile {
         guard let value = state.accounts.first(where: { $0.id == id }) else { throw AccountFailure.identity }
@@ -47,7 +48,7 @@ public final class AccountController: ObservableObject {
     private func run(operation label: String, allowRecovery: Bool = false, _ operation: () async throws -> Void) async {
         guard !busy else { return }
         guard allowRecovery || !needsRecovery else { message = AccountFailure.recovery.localizedDescription; failed = true; return }
-        busy = true; failed = false
+        busy = true; failed = false; publish()
         defer { busy = false; signingIn = false; cancellation = nil; publish() }
         do { try await operation() }
         catch {

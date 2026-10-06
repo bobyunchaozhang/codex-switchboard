@@ -25,8 +25,8 @@ struct PanelView: View {
                     .accessibilityLabel("Refresh all accounts")
                     .disabled(model.refreshing || model.busyText != nil)
             }
-            if model.currentID == nil {
-                Text(model.currentStatus)
+            if let status = model.currentStatus {
+                Text(status)
                     .font(.caption).foregroundStyle(.secondary)
             }
             ScrollView {
@@ -76,7 +76,7 @@ struct PanelView: View {
                         .buttonStyle(.plain).font(.caption2).help("Dismiss")
                 }
             }
-            if model.needsRecovery {
+            if model.showRecovery {
                 Button("Recover Interrupted Operation", action: model.recover).disabled(model.busyText != nil)
             }
             HStack {

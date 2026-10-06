@@ -1,7 +1,7 @@
 # Codex Switchboard
 
 A macOS menu bar app for checking Codex usage and switching accounts.
-**Version: 0.4.1.** One fixed Codex home keeps local projects, chats, and MCP
+**Version: 0.4.2.** One fixed Codex home keeps local projects, chats, and MCP
 configuration available across accounts. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Open and use
