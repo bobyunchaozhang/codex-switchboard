@@ -3,7 +3,7 @@
 A macOS menu bar app for viewing Codex account usage and switching accounts while
 sharing custom MCP configuration, local projects, and project chat history.
 
-**Current version: 0.3.2.** Real two-account round-trip chat continuation was
+**Current version: 0.3.3.** Real two-account round-trip chat continuation was
 accepted on September 30, 2026. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Open the app

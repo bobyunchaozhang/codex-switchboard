@@ -28,6 +28,13 @@ enum ChatLineageChecks {
         try ChatLineage.install(deps, target: b.path)
         try expectEqual(try Data(contentsOf: b.appendingPathComponent(deps[0].relativePath)), original)
         try expectEqual(try Data(contentsOf: continuation), current)
+        let alias = folder.appendingPathComponent(String(continuation.lastPathComponent.split(separator: "_")[0]) + ".jsonl")
+        try Data("different history".utf8).write(to: alias)
+        try expectThrows(try ChatLineage.retireLegacyAlias(continuation: continuation, backupDirectory: root.appendingPathComponent("backup")))
+        try expectTrue(FileManager.default.fileExists(atPath: alias.path))
+        try current.write(to: alias)
+        try ChatLineage.retireLegacyAlias(continuation: continuation, backupDirectory: root.appendingPathComponent("backup"))
+        try expectTrue(!FileManager.default.fileExists(atPath: alias.path))
         // Missing history must fail, never be silently discarded.
         try FileManager.default.removeItem(at: base)
         try expectThrows(try ChatLineage.dependencies(of: continuation, homes: [a.path]))
@@ -80,11 +87,22 @@ enum ChatLineageChecks {
             "thread-project-assignments": [id: ["projectKind": "local", "projectId": "synthetic-project"]]]
         try privateWrite(JSONSerialization.data(withJSONObject: state),
                          to: URL(fileURLWithPath: a.home).appendingPathComponent(DesktopProjects.filename))
+        // Reproduce an upgraded home: the older version left a standard-name alias
+        // of the continuation. A clean destination cannot expose this regression.
+        let legacyName = String(rollout.lastPathComponent.split(separator: "_")[0]) + ".jsonl"
+        let legacy = URL(fileURLWithPath: c.home).appendingPathComponent(relative)
+            .deletingLastPathComponent().appendingPathComponent(legacyName)
+        try privateDirectory(legacy.deletingLastPathComponent())
+        try privateCopy(URL(fileURLWithPath: a.home).appendingPathComponent(relative), to: legacy)
+        let legacySnapshot = root.appendingPathComponent("legacy-snapshot.jsonl")
+        try privateCopy(legacy, to: legacySnapshot)
         let service = SharedSetupService(executable: executable, directory: root.appendingPathComponent("shared"))
         for (source, target) in [(a, c), (c, a)] {
             let plan = try await service.prepare(accounts: [a, c], currentHome: source.home)
             try expectTrue(plan.conflicts.isEmpty)
+            print("Testing target:", URL(fileURLWithPath: target.home).lastPathComponent)
             try await service.apply(plan, choices: [:], target: target)
+            print("Apply succeeded")
             let verify = try RPCConnection(executable: executable, home: target.home, experimental: true)
             let read = try verify.request("thread/read", params: ["threadId": id, "includeTurns": false])
             let path = (read["thread"] as! [String: Any])["path"] as! String
@@ -93,6 +111,11 @@ enum ChatLineageChecks {
             _ = try verify.request("thread/unsubscribe", params: ["threadId": id])
             verify.close()
         }
+        try expectTrue(!FileManager.default.fileExists(atPath: legacy.path))
+        let backups = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("shared/Chats/Backups/LegacyAliases"), includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }
+        try expectEqual(backups.count, 1)
+        try SharedChats.requireSameContents(legacySnapshot, backups[0])
+        print("PASS: Legacy alias moved to backup without changing history")
         print("PASS: Full shared-setup round trip preserves paginated history and explicit continuation path")
         print("PASS: Paginated history resumes in two isolated homes and survives archive/unarchive")
     }

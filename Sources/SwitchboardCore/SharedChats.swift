@@ -148,6 +148,8 @@ struct SharedChats {
             for value in groups[chat.id] ?? [] { try attach(canonical, to: value.path, id: chat.id, home: value.home) }
             let destination = try targetPath(chat, observed: observed, target: target.home)
             try attach(canonical, to: destination, id: chat.id, home: target.home)
+            try ChatLineage.retireLegacyAlias(continuation: destination,
+                backupDirectory: directory.appendingPathComponent("Backups/LegacyAliases"), home: target.home)
         }
         try privateWrite(JSONEncoder().encode(manifest), to: manifestURL)
         guard !selected.isEmpty else { return }

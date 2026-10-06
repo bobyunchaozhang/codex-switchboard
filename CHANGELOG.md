@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 — 2026-10-06
+
+- Fix the remaining switch failure in upgraded homes containing legacy truncated rollout aliases.
+- Move an alias to a private backup only after verifying it matches the preserved continuation exactly.
+- Repair only the matching stale rollout-path index in an offline transaction, retaining the previous value and verifying with official resume.
+- Extend the full sharing regression to include legacy aliases; clean-home tests alone missed this state in 0.3.2.
+
 ## 0.3.2 — 2026-10-06
 
 - Fix account-switch rollback caused by paginated project chats whose earlier history was not shared.

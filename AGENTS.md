@@ -21,6 +21,10 @@ rollout files and use official resume/metadata APIs for per-home indexes. Preser
 projectless chats, authentication, existing homes, and separate SQLite databases.
 Never merge or redirect entire chat databases. Back up original rollout contents
 before linking; conflicting copies must stop the switch, never overwrite history.
+Legacy truncated rollout aliases also require a narrowly scoped offline repair of
+threads.rollout_path. Back up the old path, require the expected thread and alias,
+compare file contents, and use a transaction. Do not modify any other database
+fields; resume through the official API afterward.
 
 Build with `swift build --product CodexSwitchboard`; run focused checks with
 `swift run SwitchboardChecks` (no Xcode test framework required). Package with

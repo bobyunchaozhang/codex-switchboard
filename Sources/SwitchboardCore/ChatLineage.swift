@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 /// A paginated rollout can refer to an earlier file with the same thread ID.
 /// Keep that file separate from the current continuation and never edit either.
@@ -75,6 +76,80 @@ enum ChatLineage {
                   x.count == size, x == y else { throw ChatSharingFailure.conflict }
             remaining -= size
         }
+    }
+
+    /// Retire only the exact truncated alias produced by older Switchboard versions.
+    /// Codex's base-history discovery can pick this alias even with an explicit resume path.
+    static func retireLegacyAlias(continuation: URL, backupDirectory: URL, home: String? = nil) throws {
+        let filename = continuation.lastPathComponent
+        guard let separator = filename.firstIndex(of: "_") else { return }
+        let legacy = continuation.deletingLastPathComponent()
+            .appendingPathComponent(String(filename[..<separator]) + ".jsonl")
+        guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+        let meta = try metadata(continuation)
+        guard let id = meta["id"] as? String,
+              let base = meta["history_base"] as? [String: Any],
+              base["thread_id"] as? String == id else { return }
+        try SharedChats.requireRegular(legacy)
+        try SharedChats.requireSameContents(continuation, legacy)
+        try privateDirectory(backupDirectory)
+        let backup = backupDirectory.appendingPathComponent(UUID().uuidString + "-" + legacy.lastPathComponent)
+        // Only a stopped desktop may call this with a real home. Repair exactly
+        // the stale filename reference; official resume rebuilds content indexes.
+        if let home {
+            try repairPath(home: home, id: id, legacy: legacy, continuation: continuation, backup: backup)
+        } else {
+            try FileManager.default.moveItem(at: legacy, to: backup)
+        }
+    }
+
+    private static func repairPath(home: String, id: String, legacy: URL, continuation: URL, backup: URL) throws {
+        let databases = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: home),
+            includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix("state_") && $0.pathExtension == "sqlite" }
+        guard databases.count == 1, let database = databases.first else { throw ChatSharingFailure.verification }
+        try SharedChats.requireRegular(database)
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(database.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db else {
+            if let db { sqlite3_close(db) }
+            throw ChatSharingFailure.storage
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 2000)
+        func execute(_ sql: String) throws {
+            guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw ChatSharingFailure.storage }
+        }
+        func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "''") + "'" }
+        try execute("BEGIN IMMEDIATE")
+        var committed = false
+        var moved = false
+        defer {
+            if !committed {
+                try? execute("ROLLBACK")
+                if moved { try? FileManager.default.moveItem(at: backup, to: legacy) }
+            }
+        }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT rollout_path FROM threads WHERE id = " + quote(id), -1, &statement, nil) == SQLITE_OK else { throw ChatSharingFailure.verification }
+        defer { sqlite3_finalize(statement) }
+        let step = sqlite3_step(statement)
+        var oldPath: String?
+        if step == SQLITE_ROW, let text = sqlite3_column_text(statement, 0) { oldPath = String(cString: text) }
+        else if step != SQLITE_DONE { throw ChatSharingFailure.verification }
+        // A different indexed file is not ours to repair.
+        guard oldPath == nil || oldPath.map(normalizedHome) == normalizedHome(legacy.path) || oldPath.map(normalizedHome) == normalizedHome(continuation.path) else { throw ChatSharingFailure.conflict }
+        if let oldPath, normalizedHome(oldPath) == normalizedHome(legacy.path) {
+            try privateWrite(JSONSerialization.data(withJSONObject: [
+                "threadId": id, "previousPath": oldPath, "replacementPath": continuation.path,
+                "database": database.lastPathComponent
+            ]), to: backup.appendingPathExtension("index.json"))
+            try execute("UPDATE threads SET rollout_path = " + quote(continuation.path)
+                + " WHERE id = " + quote(id) + " AND rollout_path = " + quote(oldPath))
+            guard sqlite3_changes(db) == 1 else { throw ChatSharingFailure.verification }
+        }
+        try FileManager.default.moveItem(at: legacy, to: backup)
+        moved = true
+        try execute("COMMIT")
+        committed = true
     }
 
     static func install(_ dependencies: [Dependency], target: String) throws {
