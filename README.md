@@ -8,7 +8,9 @@ accepted on September 30, 2026. See [CHANGELOG.md](CHANGELOG.md).
 
 **Architecture preview: 0.4.0-preview.1.** A separate validation app keeps one
 fixed test home and switches only saved login caches. It does not import existing
-accounts or chats, or replace the production app. See [preview acceptance steps](PREVIEW.md).
+accounts or chats, or replace the production app. The user confirmed the core
+manual acceptance flow met expectations on October 6, 2026.
+See [preview acceptance steps and scope](PREVIEW.md).
 
 ## Open the app
 

@@ -7,7 +7,8 @@
 - Serialize usage reads and switching, preserve refreshed credentials, and verify the selected identity.
 - Journal interrupted operations, restore the previous environment on failed switches, and provide explicit recovery and return actions.
 - Add synthetic lifecycle, file-permission, and failure checks plus an installed-CLI/Keychain integration check.
-- Real ChatGPT account switching, desktop chat continuation, OAuth refresh, and MCP authorization remain pending manual acceptance.
+- On October 6, 2026, the user confirmed the delivered manual acceptance flow met expectations, validating the core fixed-home account-switching workflow.
+- Optional MCP authorization, natural OAuth token refresh, and prolonged sleep scenarios were not individually confirmed.
 
 ## 0.3.3 — 2026-10-06
 
