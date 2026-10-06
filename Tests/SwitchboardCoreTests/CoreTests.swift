@@ -157,13 +157,13 @@ struct CoreChecks {
 }
 
 private struct CheckFailure: Error { let message: String }
-private func expectEqual<T: Equatable>(_ a: T, _ b: T) throws {
+func expectEqual<T: Equatable>(_ a: T, _ b: T) throws {
     if a != b { throw CheckFailure(message: "Values differ") }
 }
 private func expectNil<T>(_ value: T?) throws {
     if value != nil { throw CheckFailure(message: "Expected nil") }
 }
-private func expectTrue(_ value: Bool) throws {
+func expectTrue(_ value: Bool) throws {
     if !value { throw CheckFailure(message: "Expected true") }
 }
 private func expectFalse(_ value: Bool) throws { try expectTrue(!value) }
@@ -171,7 +171,7 @@ private func expectLess(_ a: Double, _ b: Double) throws { try expectTrue(a < b)
 private func require<T>(_ value: T?) throws -> T {
     guard let value else { throw CheckFailure(message: "Missing value") }; return value
 }
-private func expectThrows<T>(_ expression: @autoclosure () throws -> T) throws {
+func expectThrows<T>(_ expression: @autoclosure () throws -> T) throws {
     do { _ = try expression() } catch { return }
     throw CheckFailure(message: "Expected an error")
 }
@@ -195,6 +195,13 @@ struct CheckRunner {
                 exit(0)
             } catch { print("FAIL: Synthetic sharing: \(String(describing: error))"); exit(1) }
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--lineage-rollout"), CommandLine.arguments.count == index + 4 {
+            do {
+                try await ChatLineageChecks.installedCLI(executable: URL(fileURLWithPath: CommandLine.arguments[index + 1]),
+                    sourceHome: CommandLine.arguments[index + 2], rollout: URL(fileURLWithPath: CommandLine.arguments[index + 3]))
+                exit(0)
+            } catch { print("FAIL: Isolated lineage recovery: \(error.localizedDescription)"); exit(1) }
+        }
         let tests = CoreChecks()
         let checks: [(String, () throws -> Void)] = [
             ("Reset credit expiries and partial details", tests.testResetCreditExpiriesAndPartialDetails),
@@ -208,7 +215,8 @@ struct CheckRunner {
             ("Fragmented JSON protocol", tests.testLineBufferPreservesPartialAndCoalescedMessages),
             ("Process home with spaces", tests.testProcessHomePreservesSpaces),
             ("Buffered notifications and timeout", tests.testRPCReadsReplyAlreadyBufferedBehindNotification),
-            ("Shared setup conflicts, deletions and new accounts", SharedSetupChecks.merging)
+            ("Shared setup conflicts, deletions and new accounts", SharedSetupChecks.merging),
+            ("Paginated history dependencies and conflict protection", ChatLineageChecks.regression)
         ]
         var failures = 0
         for (name, check) in checks {

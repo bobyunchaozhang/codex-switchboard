@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import OSLog
 
 public final class CancellationFlag: @unchecked Sendable {
     private let lock = NSLock()
@@ -47,7 +48,7 @@ final class RPCConnection {
         do {
             try process.run()
             _ = try request("initialize", params: ["clientInfo": [
-                "name": "codex_switchboard", "title": "Codex Switchboard", "version": "0.3.1"
+                "name": "codex_switchboard", "title": "Codex Switchboard", "version": "0.3.2"
             ], "capabilities": ["experimentalApi": experimental]])
             try send(["method": "initialized", "params": [:]])
         } catch { close(); throw error }
@@ -82,7 +83,9 @@ final class RPCConnection {
                 if description.contains("401") || description.contains("not authenticated") || description.contains("not logged in") {
                     throw SwitchboardFailure.signedOut
                 }
-                throw SwitchboardFailure.protocolError(error["code"] as? Int ?? -1)
+                let code = error["code"] as? Int ?? -1
+                Logger(subsystem: "local.codex-switchboard.app", category: "rpc").error("Request \(method, privacy: .public) failed: \(code)")
+                throw SwitchboardFailure.protocolError(code)
             }
             guard let result = message["result"] as? [String: Any] else { throw SwitchboardFailure.unavailable }
             return result

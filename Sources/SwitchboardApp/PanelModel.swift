@@ -273,7 +273,7 @@ final class PanelModel: ObservableObject {
         if let failure = error as? SwitchboardFailure {
             switch failure {
             case .unavailable, .timeout: recoverable = true
-            case .protocolError(let code): recoverable = code != -32601 && code != -32602
+            case .protocolError(let code): recoverable = code != -32600 && code != -32601 && code != -32602
             default: break
             }
             category = String(describing: failure)

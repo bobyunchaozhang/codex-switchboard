@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 — 2026-10-06
+
+- Fix account-switch rollback caused by paginated project chats whose earlier history was not shared.
+- Preserve continuation filenames, copy referenced base histories without editing them, and resume by explicit path.
+- Repair imports from older versions on the next switch; stop on missing or conflicting histories.
+- Add safe RPC method/error-code diagnostics and keep rejected-request errors visible.
+- Cover history dependency discovery, missing/conflicting bases, and isolated installed-CLI recovery.
+
 ## 0.3.1 — 2026-10-01
 
 - Clear stale transient action errors after a later successful panel-open or manual refresh.

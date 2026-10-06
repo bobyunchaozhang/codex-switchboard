@@ -2,9 +2,10 @@ import Darwin
 import Foundation
 
 public enum ChatSharingFailure: Error, LocalizedError {
-    case conflict, storage, unsupportedLocation, verification
+    case conflict, storage, unsupportedLocation, verification, lineage
     public var errorDescription: String? {
         switch self {
+        case .lineage: return "Earlier project chat history is missing or invalid. Switching was stopped; original chats have been kept."
         case .conflict: return "A project chat has conflicting local copies. Switching was stopped; no chat was overwritten."
         case .storage: return "Project chats could not be shared. Your original chats have been kept."
         case .unsupportedLocation: return "Shared project chats require regular session files on the same local disk."
@@ -111,13 +112,19 @@ struct SharedChats {
             if !values.contains(where: { $0.home == currentHome }), let previous = manifest.chats[id] {
                 selected = previous
             }
+            // Recover the original continuation filename from any identical source.
+            if let continuation = values.first(where: { $0.path.lastPathComponent.contains("_") }) {
+                selected.relativePath = continuation.chat.relativePath
+            }
             manifest.chats[id] = selected
         }
         let selected = manifest.chats.values.filter { targetProjects[$0.projectKey] != nil }.sorted { $0.id < $1.id }
+        var dependencies: [String: [ChatLineage.Dependency]] = [:]
         for chat in selected {
             let canonical = canonicalURL(chat.id)
             let source = groups[chat.id]?.first?.path ?? canonical
             try Self.requireThreadID(source, id: chat.id)
+            dependencies[chat.id] = try ChatLineage.dependencies(of: source, homes: homes.map(\.home))
             let destination = try targetPath(chat, observed: observed, target: target.home)
             if FileManager.default.fileExists(atPath: destination.path) { try Self.requireSameContents(source, destination) }
             let device = try FileManager.default.attributesOfItem(atPath: source.path)[.systemNumber] as? NSNumber
@@ -136,6 +143,7 @@ struct SharedChats {
                 if !FileManager.default.fileExists(atPath: backup.path) { try privateCopy(source, to: backup) }
                 try Self.link(source, to: canonical)
             }
+            try ChatLineage.install(dependencies[chat.id] ?? [], target: target.home)
             // Equal independent files are backed up before linking. Differing copies never overwrite.
             for value in groups[chat.id] ?? [] { try attach(canonical, to: value.path, id: chat.id, home: value.home) }
             let destination = try targetPath(chat, observed: observed, target: target.home)
@@ -161,7 +169,7 @@ struct SharedChats {
                 _ = try rpc.request("thread/unarchive", params: ["threadId": chat.id])
             }
             // Loading the shared rollout rebuilds stale per-home turn/item indexes.
-            let response = try rpc.request("thread/resume", params: ["threadId": chat.id, "excludeTurns": true], timeout: 60)
+            let response = try rpc.request("thread/resume", params: ["threadId": chat.id, "path": URL(fileURLWithPath: target.home).appendingPathComponent(chat.relativePath).path, "excludeTurns": true], timeout: 60)
             guard let thread = response["thread"] as? [String: Any], thread["id"] as? String == chat.id else { throw ChatSharingFailure.verification }
             _ = try rpc.request("thread/metadata/update", params: ["threadId": chat.id, "projectId": serverID])
             if let title = chat.title, !title.isEmpty { _ = try rpc.request("thread/name/set", params: ["threadId": chat.id, "name": title]) }
@@ -201,7 +209,11 @@ struct SharedChats {
     }
     private func canonicalURL(_ id: String) -> URL { directory.appendingPathComponent("Sessions").appendingPathComponent(id + ".jsonl") }
     private func targetPath(_ chat: SharedChat, observed: [ObservedChat], target: String) throws -> URL {
-        if let existing = observed.first(where: { $0.home == target && $0.chat.id == chat.id }) { return existing.path }
+        if let existing = observed.first(where: { $0.home == target && $0.chat.id == chat.id }),
+           existing.path.lastPathComponent == URL(fileURLWithPath: chat.relativePath).lastPathComponent {
+            return existing.path
+        }
+
         // New imports start active so App Server can index them, then archive if needed.
         let path = URL(fileURLWithPath: target).appendingPathComponent(chat.relativePath)
         _ = try Self.relativePath(path, home: target, id: chat.id)
@@ -219,11 +231,9 @@ struct SharedChats {
         // Retain the standard rollout date layout even when the source is archived.
         let date = String(path.lastPathComponent.dropFirst(8).prefix(10)).split(separator: "-")
         guard date.count == 3, date.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }), !full.isEmpty else { throw ChatSharingFailure.unsupportedLocation }
-        // Some desktop rollouts have an extra UUID suffix. New destinations need
-        // the standard filename so App Server can discover them before indexing.
-        guard let identityRange = path.lastPathComponent.range(of: id) else { throw ChatSharingFailure.verification }
-        let filename = String(path.lastPathComponent[..<identityRange.upperBound]) + ".jsonl"
-        return "sessions/" + date.joined(separator: "/") + "/" + filename
+        // The suffix identifies a continuation; removing it can make its base
+        // reference resolve to itself. Resume by explicit path instead.
+        return "sessions/" + date.joined(separator: "/") + "/" + path.lastPathComponent
     }
     static func requireThreadID(_ path: URL, id: String) throws {
         try requireRegular(path)

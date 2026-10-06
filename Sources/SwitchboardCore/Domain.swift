@@ -106,6 +106,7 @@ public enum SwitchboardFailure: Error, LocalizedError, Sendable {
         switch self {
         case .unavailable: return "Codex could not complete the request. Refresh and try again."
         case .protocolError(let code):
+            if code == -32600 { return "Codex rejected the request. Existing account and chat data have been kept." }
             if code == -32601 || code == -32602 { return "This request is incompatible with the installed Codex version." }
             return "Codex returned an error. Refresh and try again."
         case .timeout: return "Codex did not respond in time."
