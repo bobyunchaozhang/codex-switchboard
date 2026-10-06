@@ -6,6 +6,10 @@ sharing custom MCP configuration, local projects, and project chat history.
 **Current version: 0.3.3.** Real two-account round-trip chat continuation was
 accepted on September 30, 2026. See [CHANGELOG.md](CHANGELOG.md).
 
+**Architecture preview: 0.4.0-preview.1.** A separate validation app keeps one
+fixed test home and switches only saved login caches. It does not import existing
+accounts or chats, or replace the production app. See [preview acceptance steps](PREVIEW.md).
+
 ## Open the app
 
 Open **Applications → Codex Switchboard**, then click the **thumbs-up icon** in

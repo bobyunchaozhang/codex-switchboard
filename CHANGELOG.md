@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0-preview.1 — 2026-10-06
+
+- Add a separate fixed-home validation app; keep the installed 0.3.3 production app unchanged.
+- Use official sign-in and usage requests with preview-owned credentials only; store inactive caches in a dedicated macOS Keychain service.
+- Serialize usage reads and switching, preserve refreshed credentials, and verify the selected identity.
+- Journal interrupted operations, restore the previous environment on failed switches, and provide explicit recovery and return actions.
+- Add synthetic lifecycle, file-permission, and failure checks plus an installed-CLI/Keychain integration check.
+- Real ChatGPT account switching, desktop chat continuation, OAuth refresh, and MCP authorization remain pending manual acceptance.
+
 ## 0.3.3 — 2026-10-06
 
 - Fix the remaining switch failure in upgraded homes containing legacy truncated rollout aliases.

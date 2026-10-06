@@ -1,0 +1,295 @@
+import Darwin
+import Foundation
+@testable import SwitchboardCore
+@testable import PreviewCore
+
+final class MemoryVault: CredentialVault {
+    var entries: [String: Data] = [:]
+    var failWrites = false
+    func read(_ name: String) throws -> Data? { entries[name] }
+    func write(_ data: Data, name: String) throws {
+        if failWrites { throw PreviewError.keychain }
+        entries[name] = data
+    }
+    func remove(_ name: String) throws { entries.removeValue(forKey: name) }
+}
+
+func fixture(_ label: String, revision: Int = 1) -> Data {
+    try! JSONSerialization.data(withJSONObject: ["fixture": label, "revision": revision])
+}
+func decode(_ data: Data?) -> (String, Int)? {
+    guard let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let label = object["fixture"] as? String, let revision = object["revision"] as? Int else { return nil }
+    return (label, revision)
+}
+func check(_ result: @autoclosure () throws -> Bool, _ name: String) throws {
+    if try !result() { throw NSError(domain: "PreviewChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: name]) }
+}
+
+@MainActor
+final class FakeRuntime: PreviewRuntime {
+    var presence: DesktopPresence = .running(pid: 1, home: "/synthetic-original-home")
+    var nextLogin = "a"
+    var loginFails = false
+    var failPolicy = false
+    var writers = false
+    var legacy = false
+    var launchFailures = 0
+    var readFailureHome: String?
+    var wrongIdentityHome: String?
+    var invalidateHome: String?
+    var rotateOnRead = false
+    var afterQuit: (() throws -> Void)?
+    var launches: [String] = []
+    func validate(home: String) async throws { if failPolicy { throw PreviewError.policy } }
+    func read(home: String) async -> Reading {
+        if home == readFailureHome { return Reading(identity: nil, usage: nil) }
+        if home == invalidateHome { return Reading(identity: nil, usage: nil, needsLogin: true) }
+        let url = URL(fileURLWithPath: home).appendingPathComponent("auth.json")
+        guard let pair = decode(try? PrivateFile.read(url)) else { return Reading(identity: nil, usage: nil, needsLogin: true) }
+        if rotateOnRead { try? PrivateFile.write(fixture(pair.0, revision: pair.1 + 1), to: url) }
+        let label = home == wrongIdentityHome ? "wrong" : pair.0
+        let usage = try? UsageDecoder.decode(Data(#"{"rateLimits":{"primary":{"usedPercent":20,"windowDurationMins":300}}}"#.utf8))
+        return Reading(identity: Identity(email: label + "@example.test", plan: "plus"), usage: usage)
+    }
+    func login(home: String, cancellation: CancellationFlag) async throws -> Identity {
+        if loginFails { throw SwitchboardFailure.loginCancelled }
+        try PrivateFile.write(fixture(nextLogin), to: URL(fileURLWithPath: home).appendingPathComponent("auth.json"))
+        return Identity(email: nextLogin + "@example.test", plan: "plus")
+    }
+    func activate(home: String, change: @escaping () async throws -> Void) async throws {
+        let before = presence
+        presence = .stopped
+        do {
+            try afterQuit?(); afterQuit = nil
+            try await change()
+            if launchFailures > 0 { launchFailures -= 1; throw SwitchboardFailure.launchFailed }
+            presence = .running(pid: 2, home: home); launches.append(home)
+        } catch {
+            presence = before
+            throw error
+        }
+    }
+    func quiescent(home: String) async throws { if writers { throw PreviewError.writers } }
+    func checkLegacy() throws { if legacy { throw PreviewError.legacyApp } }
+}
+
+@MainActor
+struct Harness {
+    let root: URL
+    let vault: MemoryVault
+    let store: PreviewStore
+    let runtime: FakeRuntime
+    let controller: PreviewController
+    init() throws {
+        root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("switchboard-preview-check-" + UUID().uuidString)
+        vault = MemoryVault(); store = try PreviewStore(root: root, vault: vault)
+        runtime = FakeRuntime(); controller = try PreviewController(store: store, runtime: runtime)
+    }
+    func clean() { try? FileManager.default.removeItem(at: root) }
+    func twoAccounts() async throws -> (UUID, UUID) {
+        await controller.addAccount()
+        try check(!controller.failed, "add A")
+        runtime.nextLogin = "b"
+        await controller.addAccount()
+        try check(!controller.failed && controller.accounts.count == 2, "add B")
+        return (controller.accounts[0].id, controller.accounts[1].id)
+    }
+}
+
+@main
+struct PreviewChecks {
+    @MainActor static func main() async {
+        let tests: [(String, () async throws -> Void)] = [
+            ("fixed home A-B-A and latest active cache", roundTrip),
+            ("worker refresh is saved before switch", workerRefresh),
+            ("launch failure restores previous login", launchFailure),
+            ("failed rollback leaves recoverable journal", failedRollback),
+            ("unexpected target identity blocks acceptance", wrongIdentity),
+            ("worker vault failure recovers latest cache", workerRecovery),
+            ("completed worker cleanup is idempotent", cleanupRecovery),
+            ("cancelled and mismatched login preserve accounts", cancelledLogin),
+            ("policy, writer and legacy app guards", guards),
+            ("offline return and active reauthentication", renewal),
+            ("private files reject symlinks and duplicate instances", privateStorage)
+        ]
+        do {
+            for (name, test) in tests { try await test(); print("PASS: \(name)") }
+            if let index = CommandLine.arguments.firstIndex(of: "--integration-cli"), CommandLine.arguments.count > index + 1 {
+                try await installedCLI(URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+                print("PASS: installed CLI authentication, fixed project registry, and private Keychain round-trip")
+            }
+            print("\(tests.count) preview checks passed. No real credentials or desktop sessions were used.")
+        } catch { print("FAIL: \(error.localizedDescription)"); exit(1) }
+    }
+    @MainActor static func roundTrip() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts()
+        let sentinel = h.store.home.appendingPathComponent("fixture-chat.jsonl")
+        let content = Data("unchanged project chat".utf8)
+        try PrivateFile.write(content, to: sentinel)
+        await h.controller.switchTo(a)
+        try check(!h.controller.failed && h.controller.current == a, "open A")
+        h.runtime.afterQuit = { try h.store.install(fixture("a", revision: 9), in: h.store.home) }
+        await h.controller.switchTo(b)
+        try check(!h.controller.failed && h.controller.current == b, "switch B")
+        try check(decode(h.vault.entries[a.uuidString])?.1 == 9, "capture latest A after stop")
+        await h.controller.switchTo(a)
+        try check(!h.controller.failed && h.controller.current == a, "return A")
+        try check(decode(try h.store.credential(h.store.home))?.1 == 9, "newest A restored")
+        try check(try PrivateFile.read(sentinel) == content, "chat unchanged")
+        try check(h.runtime.launches.allSatisfy { $0 == h.store.home.path }, "one fixed home")
+        await h.controller.returnToOriginal()
+        try check(h.runtime.presence.home == "/synthetic-original-home" && h.controller.current == nil, "original restored")
+        try check(try h.store.load().switching == nil, "no remaining transaction")
+    }
+    @MainActor static func workerRefresh() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts()
+        await h.controller.switchTo(a)
+        h.runtime.rotateOnRead = true
+        await h.controller.refresh()
+        try check(!h.controller.failed, "refresh succeeds")
+        try check(decode(h.vault.entries[b.uuidString])?.1 == 2, "worker wrote refreshed B")
+        try check(decode(h.vault.entries[a.uuidString])?.1 == 1, "active snapshot not treated as authoritative")
+        await h.controller.switchTo(b)
+        try check(!h.controller.failed, "switch after refresh")
+        try check((decode(try h.store.credential(h.store.home))?.1 ?? 0) >= 3, "newest B activated")
+    }
+    @MainActor static func launchFailure() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        h.runtime.launchFailures = 1
+        await h.controller.switchTo(b)
+        try check(h.controller.failed && !h.controller.needsRecovery, "failed launch recovered")
+        try check(try h.store.load().active == a, "previous active restored")
+        try check(decode(try h.store.credential(h.store.home))?.0 == "a", "A cache restored")
+    }
+    @MainActor static func failedRollback() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        h.runtime.launchFailures = 2
+        await h.controller.switchTo(b)
+        try check(h.controller.needsRecovery, "failed rollback kept journal")
+        await h.controller.recover()
+        try check(!h.controller.failed && !h.controller.needsRecovery, "manual recovery succeeds")
+        try check(try h.store.load().active == a, "recovered A")
+    }
+    @MainActor static func wrongIdentity() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (_,b) = try await h.twoAccounts()
+        h.runtime.wrongIdentityHome = h.store.home.path
+        await h.controller.switchTo(b)
+        try check(h.controller.failed && h.controller.current == nil, "wrong account never current")
+        try check(h.runtime.presence.home == "/synthetic-original-home", "original desktop restored")
+    }
+    @MainActor static func workerRecovery() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (_,b) = try await h.twoAccounts()
+        h.runtime.rotateOnRead = true; h.vault.failWrites = true
+        await h.controller.refresh()
+        try check(h.controller.needsRecovery, "failed vault write kept worker")
+        h.vault.failWrites = false
+        await h.controller.recover()
+        try check(!h.controller.failed && !h.controller.needsRecovery, "recover latest worker")
+        await h.controller.switchTo(b)
+        try check(!h.controller.failed, "switch still possible")
+    }
+    @MainActor static func cleanupRecovery() async throws {
+        let h = try Harness(); defer { h.clean() }
+        var state = try h.store.load()
+        var worker = WorkerJournal(id: UUID(), accountID: nil, login: true, materialized: false)
+        worker.completed = true; state.worker = worker
+        try h.store.save(state)
+        let reloaded = try PreviewController(store: h.store, runtime: h.runtime)
+        await reloaded.recover()
+        try check(!reloaded.needsRecovery && !reloaded.failed, "missing completed worker directory is harmless")
+    }
+    @MainActor static func cancelledLogin() async throws {
+        let h = try Harness(); defer { h.clean() }
+        h.runtime.loginFails = true; await h.controller.addAccount()
+        try check(h.controller.accounts.isEmpty && !h.controller.needsRecovery, "cancel leaves no profile")
+        h.runtime.loginFails = false
+        let (a,_) = try await h.twoAccounts()
+        h.runtime.nextLogin = "wrong"; await h.controller.addAccount(replacing: a)
+        try check(h.controller.failed && !h.controller.needsRecovery, "wrong login rejected")
+        try check(decode(h.vault.entries[a.uuidString])?.0 == "a", "previous credentials intact")
+    }
+    @MainActor static func guards() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,b) = try await h.twoAccounts()
+        h.runtime.legacy = true; await h.controller.switchTo(a)
+        try check(h.controller.failed && h.runtime.launches.isEmpty, "legacy guard")
+        h.runtime.legacy = false; h.runtime.failPolicy = true; await h.controller.switchTo(a)
+        try check(h.controller.failed && h.runtime.launches.isEmpty, "managed policy guard")
+        h.runtime.failPolicy = false; await h.controller.recover()
+        await h.controller.switchTo(a)
+        h.runtime.writers = true; await h.controller.switchTo(b)
+        try check(h.controller.failed, "writer guard")
+        try check(decode(try h.store.credential(h.store.home))?.0 == "a", "writer guard kept A")
+    }
+    @MainActor static func renewal() async throws {
+        let h = try Harness(); defer { h.clean() }
+        let (a,_) = try await h.twoAccounts(); await h.controller.switchTo(a)
+        h.runtime.readFailureHome = h.store.home.path
+        await h.controller.returnToOriginal()
+        try check(!h.controller.failed, "offline return")
+        h.runtime.readFailureHome = nil; h.runtime.invalidateHome = h.store.home.path
+        h.runtime.nextLogin = "a"; await h.controller.addAccount(replacing: a)
+        try check(!h.controller.failed, "renew outside test environment")
+        h.runtime.invalidateHome = nil; await h.controller.switchTo(a)
+        try check(!h.controller.failed && h.controller.current == a, "open renewed login")
+    }
+    @MainActor static func privateStorage() async throws {
+        let h = try Harness(); defer { h.clean() }
+        var blocked = false
+        do { _ = try PreviewStore(root: h.root, vault: MemoryVault()) } catch { blocked = true }
+        try check(blocked, "duplicate instance blocked")
+        let outside = h.root.appendingPathComponent("untouched.json")
+        try PrivateFile.write(fixture("outside"), to: outside)
+        let auth = h.store.home.appendingPathComponent("auth.json")
+        try FileManager.default.createSymbolicLink(at: auth, withDestinationURL: outside)
+        blocked = false
+        do { try h.store.install(fixture("a"), in: h.store.home) } catch { blocked = true }
+        try check(blocked && decode(try PrivateFile.read(outside))?.0 == "outside", "symlink rejected")
+        try FileManager.default.removeItem(at: auth)
+        try h.store.install(fixture("a"), in: h.store.home)
+        let attrs = try FileManager.default.attributesOfItem(atPath: auth.path)
+        try check((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o600, "credential permissions")
+    }
+    @MainActor static func installedCLI(_ executable: URL) async throws {
+        let h = try Harness(); defer { h.clean() }
+        try await PreviewBackend.validateConfiguration(executable: executable, home: h.store.home.path)
+        let vault = KeychainVault(), name = "fixture-" + UUID().uuidString
+        defer { try? vault.remove(name) }
+        var projectBaseline: Data?
+        do {
+            let rpc = try RPCConnection(executable: executable, home: h.store.home.path, experimental: true)
+            defer { rpc.close() }
+            _ = try rpc.request("account/login/start", params: ["type": "apiKey", "apiKey": "sk-synthetic-preview-A-invalid"])
+            _ = try rpc.request("project/create", params: ["idempotencyKey": UUID().uuidString,
+                "name": "Synthetic preview project", "roots": [["path": h.store.project.path]]])
+            projectBaseline = try JSONSerialization.data(withJSONObject: rpc.request("project/list"), options: [.sortedKeys])
+        }
+        guard let first = try h.store.credential(h.store.home) else { throw PreviewError.storage }
+        try vault.write(first, name: name)
+        do {
+            let rpc = try RPCConnection(executable: executable, home: h.store.home.path)
+            defer { rpc.close() }
+            _ = try rpc.request("account/login/start", params: ["type": "apiKey", "apiKey": "sk-synthetic-preview-B-invalid"])
+            let result = try rpc.request("getAuthStatus", params: ["includeToken": true, "refreshToken": false])
+            try check(result["authToken"] as? String == "sk-synthetic-preview-B-invalid", "CLI B login")
+        }
+        let saved = try vault.read(name)
+        try check(saved == first, "Keychain preserved opaque fixture")
+        try h.store.install(saved, in: h.store.home)
+        do {
+            let rpc = try RPCConnection(executable: executable, home: h.store.home.path, experimental: true)
+            defer { rpc.close() }
+            let result = try rpc.request("getAuthStatus", params: ["includeToken": true, "refreshToken": false])
+            try check(result["authToken"] as? String == "sk-synthetic-preview-A-invalid", "CLI restored A login")
+            let projects = try JSONSerialization.data(withJSONObject: rpc.request("project/list"), options: [.sortedKeys])
+            try check(projects == projectBaseline, "CLI fixed project registry")
+        }
+    }
+}
