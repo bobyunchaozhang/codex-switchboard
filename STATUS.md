@@ -8,7 +8,9 @@
 - 构建脚本支持显式指定架构；DMG 包含应用及 Applications 快捷入口，附 SHA-256 文件。
 - 版本标签触发 GitHub Actions：分别在 ARM 和 Intel runner 检查、打包；两边成功后发布两种架构的安装包。
 - 本机两种架构均编译、签名和 DMG 校验通过；14 项核心检查、18 项生命周期检查和 ARM 原生菜单布局检查通过。
-- 本机没有 Rosetta，因此未在本机执行 x86_64 程序；Intel 原生合成检查由发布流水线执行，真实账号切换需要同事手动验收。
+- 本机没有 Rosetta，因此未在本机执行 x86_64 程序；GitHub 的 Intel 和 ARM 原生机器均已通过 14 项核心、18 项生命周期检查并完成打包。真实 Intel 账号切换仍需同事手动验收。
+- 初次 CI 暴露旧分类测试依赖桌面安装目录存在；流水线补齐合成目录后通过，无真实桌面或认证数据。
+- [发布流水线](https://github.com/bobyunchaozhang/codex-switchboard/actions/runs/38036553305)成功；[0.4.4 Release](https://github.com/bobyunchaozhang/codex-switchboard/releases/tag/v0.4.4)的两种 DMG 和校验文件已上传，重新下载后的 SHA-256 与 DMG 完整性检查通过。
 
 ## 0.4.3 额度颜色分级
 
