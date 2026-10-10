@@ -48,3 +48,9 @@ changes, and push the commit and matching version tag to the configured GitHub
 remote. The user has authorized this recurring release step; do not leave a
 version update only on the local machine. Verify the remote commit and report
 any upload failure without claiming the release was uploaded.
+
+For every release, publish separate arm64 and x86_64 DMG installers with SHA-256
+checksums to GitHub Releases. Build them with `./scripts/package-release.sh`;
+version tags trigger `.github/workflows/release.yml`. Verify both remote assets
+before claiming installer publication. Keep Intel manual acceptance distinct
+from cross-compilation and native fixture checks.

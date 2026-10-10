@@ -1,8 +1,20 @@
 # Codex Switchboard
 
 A macOS menu bar app for checking Codex usage and switching accounts.
-**Version: 0.4.3.** One fixed Codex home keeps local projects, chats, and MCP
+**Version: 0.4.4.** One fixed Codex home keeps local projects, chats, and MCP
 configuration available across accounts. See [CHANGELOG.md](CHANGELOG.md).
+
+## Download and install
+
+Download from [GitHub Releases](https://github.com/bobyunchaozhang/codex-switchboard/releases):
+
+- Intel Mac: `Codex-Switchboard-VERSION-x86_64.dmg`.
+- Apple Silicon: `Codex-Switchboard-VERSION-arm64.dmg`.
+
+Open the DMG and drag **Codex Switchboard** into **Applications**. Requires macOS
+14+ and an installed, working Codex desktop app. Builds are ad hoc signed, not
+notarized; use Finder → right-click → Open if macOS asks for confirmation.
+Real account switching on Intel still needs manual acceptance.
 
 ## Open and use
 
@@ -50,6 +62,18 @@ open '/Applications/Codex Switchboard.app'
 
 Builds are ad hoc signed for local use, not notarized for public distribution.
 `.build/` and `dist/` are generated and can be removed after installation.
+
+## Release packages
+
+```sh
+./scripts/package-release.sh          # Both architectures
+./scripts/package-release.sh x86_64   # Intel only
+```
+
+Packages and SHA-256 checksum files are written to `dist/`. Pushing a matching
+version tag runs native core/lifecycle checks on both architectures, builds both
+DMGs, and publishes them together to GitHub Releases. If either build fails, the
+release is not published; rerun the failed workflow after fixing the failure.
 
 ## Upgrade from 0.3.3
 

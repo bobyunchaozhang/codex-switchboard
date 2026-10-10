@@ -48,7 +48,7 @@ final class RPCConnection {
         do {
             try process.run()
             _ = try request("initialize", params: ["clientInfo": [
-                "name": "codex_switchboard", "title": "Codex Switchboard", "version": "0.4.3"
+                "name": "codex_switchboard", "title": "Codex Switchboard", "version": "0.4.4"
             ], "capabilities": ["experimentalApi": experimental]])
             try send(["method": "initialized", "params": [:]])
         } catch { close(); throw error }

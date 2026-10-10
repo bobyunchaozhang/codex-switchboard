@@ -1,0 +1,86 @@
+name: Release macOS packages
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Check core and account lifecycle
+        run: |
+          swift run SwitchboardChecks
+          swift run AccountRuntimeChecks
+      - name: Build and package
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: ./scripts/package-release.sh "$TARGET_ARCH"
+      - name: Verify release version
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "dist/$TARGET_ARCH/Codex Switchboard.app/Contents/Info.plist")
+          test "$GITHUB_REF_NAME" = "v$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: packages
+      - name: Verify package checksums
+        working-directory: packages
+        run: sha256sum --check *.sha256
+      - name: Prepare release notes
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          version = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          changelog = Path('CHANGELOG.md').read_text()
+          entry = changelog.split('## ' + version + ' — ', 1)[1].split('\n\n', 1)[1].split('\n## ', 1)[0].strip()
+          installation = '\n\nDownload x86_64 for Intel Macs or arm64 for Apple Silicon. Requires macOS 14+ and a working Codex desktop installation. Open the DMG and drag Codex Switchboard into Applications. Builds are ad hoc signed, not notarized. Real Intel account-switch acceptance is pending.'
+          Path('release-notes.md').write_text(entry + installation + '\n')
+          PY
+      - name: Publish both packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" packages/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" packages/* --verify-tag \
+              --title "Codex Switchboard ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
+          fi

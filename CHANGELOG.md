@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4 — 2026-10-10
+
+- Package separate arm64 and x86_64 DMG installers with SHA-256 checksums.
+- Build and validate the requested architecture explicitly.
+- Add automatic GitHub Release publication on version tags, gated by native checks and successful packaging of both architectures.
+- Keep the macOS 14 minimum; real Intel account switching still needs manual acceptance.
+
 ## 0.4.3 — 2026-10-10
 
 - Use five remaining-quota levels: green above 75%, cyan above 50%, yellow above 25%, orange above 10%, and red at 10% or below.
