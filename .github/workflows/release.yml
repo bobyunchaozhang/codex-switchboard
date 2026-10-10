@@ -3,7 +3,16 @@ name: Release macOS packages
 on:
   push:
     tags:
-      - 'v[0-9]*'
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: read
@@ -21,6 +30,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - name: Check native architecture
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
@@ -38,7 +49,7 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "dist/$TARGET_ARCH/Codex Switchboard.app/Contents/Info.plist")
-          test "$GITHUB_REF_NAME" = "v$version"
+          test "$RELEASE_TAG" = "v$version"
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.arch }}
@@ -55,6 +66,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           pattern: package-*
@@ -68,7 +81,7 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
-          version = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          version = os.environ['RELEASE_TAG'].removeprefix('v')
           changelog = Path('CHANGELOG.md').read_text()
           entry = changelog.split('## ' + version + ' — ', 1)[1].split('\n\n', 1)[1].split('\n## ', 1)[0].strip()
           installation = '\n\nDownload x86_64 for Intel Macs or arm64 for Apple Silicon. Requires macOS 14+ and a working Codex desktop installation. Open the DMG and drag Codex Switchboard into Applications. Builds are ad hoc signed, not notarized. Real Intel account-switch acceptance is pending.'
@@ -78,9 +91,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" packages/* --clobber
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" packages/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" packages/* --verify-tag \
-              --title "Codex Switchboard ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
+            gh release create "$RELEASE_TAG" packages/* --verify-tag \
+              --title "Codex Switchboard ${RELEASE_TAG#v}" --notes-file release-notes.md
           fi
