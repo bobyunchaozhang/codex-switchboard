@@ -1,7 +1,7 @@
 # Codex Switchboard
 
 A macOS menu bar app for checking Codex usage and switching accounts.
-**Version: 0.4.2.** One fixed Codex home keeps local projects, chats, and MCP
+**Version: 0.4.3.** One fixed Codex home keeps local projects, chats, and MCP
 configuration available across accounts. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Open and use
@@ -14,6 +14,9 @@ After **Quit**, reopen `/Applications/Codex Switchboard.app`.
   loading; failed reads show **Unavailable**. Cache lasts for the app session.
 - Cards show email, plan, quota windows, reset times, and reset credits.
   Expand the credits row to see individual expiry dates.
+- Quota colors follow remaining usage: >75% green, >50–75% cyan,
+  >25–50% yellow, >10–25% orange, and ≤10% red. Card tint uses the lowest
+  remaining quota window.
 - The gold **Current** badge marks the verified current account.
 - **Switch** restarts Codex with the selected login. Running work can be interrupted.
 - **Add Account** and **Sign In** use official browser login.

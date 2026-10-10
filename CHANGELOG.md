@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3 — 2026-10-10
+
+- Use five remaining-quota levels: green above 75%, cyan above 50%, yellow above 25%, orange above 10%, and red at 10% or below.
+- Share one palette between account card tints, borders, and quota progress bars; cards reflect the lowest remaining quota window.
+- Document the approved thresholds, including yellow at 39% remaining.
+
 ## 0.4.2 — 2026-10-07
 
 - Show recovery only for unfinished operations after active work has stopped.

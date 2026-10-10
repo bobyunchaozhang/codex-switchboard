@@ -4,6 +4,18 @@ import SwitchboardCore
 // Name the property wrapper explicitly; newer SDKs also export a State macro.
 private typealias ViewState<Value> = SwiftUI.State<Value>
 
+private enum QuotaPalette {
+    static func color(for remaining: Double) -> Color {
+        switch remaining {
+        case ...10: return .red
+        case ...25: return .orange
+        case ...50: return .yellow
+        case ...75: return .cyan
+        default: return .green
+        }
+    }
+}
+
 struct PanelView: View {
     @ObservedObject var model: PanelModel
     var quit: () -> Void
@@ -107,7 +119,7 @@ struct AccountCard: View {
 
     private var color: Color {
         guard case .available(let usage) = state, let remaining = usage.quotas.map(\.remaining).min() else { return .gray }
-        return remaining <= 10 ? .red : remaining <= 25 ? .orange : .green
+        return QuotaPalette.color(for: remaining)
     }
 
     var body: some View {
@@ -215,7 +227,7 @@ struct CardPreview: View {
 
 private struct QuotaRow: View {
     let quota: Quota
-    private var color: Color { quota.remaining <= 10 ? .red : quota.remaining <= 25 ? .orange : .green }
+    private var color: Color { QuotaPalette.color(for: quota.remaining) }
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
