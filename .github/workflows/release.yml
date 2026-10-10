@@ -36,6 +36,10 @@ jobs:
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Prepare synthetic desktop directory
+        # The classifier fixture expects an existing desktop executable directory.
+        # No real desktop app, login, or credential is installed in CI.
+        run: sudo mkdir -p /Applications/ChatGPT.app/Contents/MacOS
       - name: Check core and account lifecycle
         run: |
           swift run SwitchboardChecks
