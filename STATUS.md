@@ -11,6 +11,9 @@
 
 - 本机通过 14 项核心检查、语言默认值/保存/恢复/缓存保留检查，以及中英文原生菜单布局检查；浅色和深色预览已核对。
 
+- [0.5.0 发布流水线](https://github.com/bobyunchaozhang/codex-switchboard/actions/runs/38234729774)由版本标签自动触发，ARM 和 Intel 原生核心、生命周期及语言保存/恢复检查通过。
+- 两种 DMG 与 SHA-256 文件已上传 [GitHub Release](https://github.com/bobyunchaozhang/codex-switchboard/releases/tag/v0.5.0)，重新下载并通过校验；本机应用已替换启动，构建和预览临时文件已清理。
+
 ## 0.4.4 双架构发布
 
 - 用户要求每次更新同步生成独立 Intel x86_64 安装包，并上传 GitHub。
