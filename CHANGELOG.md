@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 — 2026-10-12
+
+- Add English and Simplified Chinese interface options, defaulting to English and persisting the selection across restarts.
+- Group Add Account and Language in the bottom-left Settings menu.
+- Update app-owned labels, statuses, errors, quota periods, reset details, and dates immediately when the language changes.
+- Keep language selection available during refresh and preserve cached account state.
+
 ## 0.4.4 — 2026-10-10
 
 - Package separate arm64 and x86_64 DMG installers with SHA-256 checksums.

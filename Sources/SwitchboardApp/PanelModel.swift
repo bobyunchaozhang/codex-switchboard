@@ -17,6 +17,10 @@ enum CardState { case loading, available(Usage), unavailable, signIn }
 
 @MainActor
 final class PanelModel: ObservableObject {
+    @Published var language: AppLanguage {
+        didSet { preferences?.set(language.rawValue, forKey: AppLanguage.preferenceKey) }
+    }
+    private let preferences: UserDefaults?
     @Published private(set) var accounts: [SavedAccount] = []
     @Published private(set) var states: [UUID: CardState] = [:]
     @Published private(set) var currentID: UUID?
@@ -43,7 +47,10 @@ final class PanelModel: ObservableObject {
             ? "Current account unknown" : "Current account is not added"
     }
 
-    init(loadRuntime: Bool = true) {
+    init(loadRuntime: Bool = true, preferences: UserDefaults? = nil) {
+        let preferences = preferences ?? (loadRuntime ? .standard : nil)
+        self.preferences = preferences
+        language = preferences?.string(forKey: AppLanguage.preferenceKey).flatMap(AppLanguage.init(rawValue:)) ?? .english
         guard loadRuntime else { return }
         do {
             let runtime = try AccountController(); self.runtime = runtime
@@ -158,8 +165,9 @@ final class PanelModel: ObservableObject {
         return (error as? SwitchboardFailure)?.localizedDescription ?? "The operation could not be completed."
     }
 
-    static func preview(accountCount: Int = 2, loading: Bool = false, refreshingCached: Bool = false, checkingAccount: Bool = false, interrupted: Bool = false, currentVerified: Bool = true) -> PanelModel {
+    static func preview(accountCount: Int = 2, loading: Bool = false, refreshingCached: Bool = false, checkingAccount: Bool = false, interrupted: Bool = false, currentVerified: Bool = true, language: AppLanguage = .english) -> PanelModel {
         let model = PanelModel(loadRuntime: false)
+        model.language = language
         let a = SavedAccount(home: "/tmp/preview-a", email: "alex@example.com", plan: "pro")
         let b = SavedAccount(home: "/tmp/preview-b", email: "work@example.com", plan: "business")
         model.accounts = [a, b]; model.currentID = a.id

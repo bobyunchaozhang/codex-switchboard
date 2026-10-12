@@ -1,7 +1,8 @@
 # Codex Switchboard
 
-Read PRODUCT.md and STATUS.md before changing behavior. Keep implementation,
-comments, and UI text in English. Product discussion documents may use Chinese.
+Read PRODUCT.md and STATUS.md before changing behavior. Keep implementation
+and comments in English. UI supports English (default) and Simplified Chinese,
+as authorized on 2026-10-12. Product discussion documents may use Chinese.
 
 This is a fresh implementation. BobToolbox is a visual and historical reference;
 do not copy its code or expand the approved feature set.

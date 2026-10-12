@@ -48,6 +48,10 @@ jobs:
         env:
           TARGET_ARCH: ${{ matrix.arch }}
         run: ./scripts/package-release.sh "$TARGET_ARCH"
+      - name: Check language persistence and presentation
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: '"dist/$TARGET_ARCH/Codex Switchboard.app/Contents/MacOS/CodexSwitchboard" --check-localization'
       - name: Verify release version
         env:
           TARGET_ARCH: ${{ matrix.arch }}

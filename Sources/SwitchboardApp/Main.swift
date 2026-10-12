@@ -9,6 +9,10 @@ enum Main {
     @MainActor static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        if CommandLine.arguments.contains("--check-localization") {
+            PanelLayoutChecks.checkLocalization()
+            return
+        }
         if CommandLine.arguments.contains("--check-layout") {
             Task { await PanelLayoutChecks.run(); app.terminate(nil) }
             app.run()
@@ -42,8 +46,12 @@ enum Main {
 
     @MainActor private static func renderPreview(path: String) {
         let model = PanelModel.preview()
-        let view = CardPreview(model: model, expandedCredits: CommandLine.arguments.contains("--expanded-credits")).environment(\.colorScheme, .light)
+        if let index = CommandLine.arguments.firstIndex(of: "--language"), CommandLine.arguments.count > index + 1 {
+            model.language = AppLanguage(rawValue: CommandLine.arguments[index + 1]) ?? .english
+        }
+        let view = CardPreview(model: model, expandedCredits: CommandLine.arguments.contains("--expanded-credits"))
             .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, CommandLine.arguments.contains("--dark") ? .dark : .light)
         let renderer = ImageRenderer(content: view)
         renderer.proposedSize = ProposedViewSize(width: 380, height: nil)
         renderer.scale = 2

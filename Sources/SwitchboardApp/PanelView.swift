@@ -21,6 +21,7 @@ struct PanelView: View {
     var quit: () -> Void
     var initiallyExpandedCredits = false
     @ViewState private var contentHeight: CGFloat = 180
+    private var language: AppLanguage { model.language }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -28,17 +29,17 @@ struct PanelView: View {
                 Text("Codex Switchboard").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 if model.refreshing {
-                    ProgressView().controlSize(.mini).accessibilityLabel("Refreshing accounts")
-                    Text("Refreshing…").font(.caption).foregroundStyle(.secondary).fixedSize()
+                    ProgressView().controlSize(.mini).accessibilityLabel(language.text("Refreshing accounts"))
+                    Text(language.text("Refreshing…")).font(.caption).foregroundStyle(.secondary).fixedSize()
                 }
                 Button(action: model.refreshClicked) { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
-                    .help("Refresh all accounts")
-                    .accessibilityLabel("Refresh all accounts")
+                    .help(language.text("Refresh all accounts"))
+                    .accessibilityLabel(language.text("Refresh all accounts"))
                     .disabled(model.refreshing || model.busyText != nil)
             }
             if let status = model.currentStatus {
-                Text(status)
+                Text(language.message(status))
                     .font(.caption).foregroundStyle(.secondary)
             }
             ScrollView {
@@ -46,8 +47,8 @@ struct PanelView: View {
                     if model.accounts.isEmpty {
                         VStack(spacing: 7) {
                             Image(systemName: "person.crop.circle.badge.plus").font(.title2).foregroundStyle(.secondary)
-                            Text("Add your Codex accounts").font(.subheadline.weight(.medium))
-                            Text("Sign in once to view usage and switch accounts.")
+                            Text(language.text("Add your Codex accounts")).font(.subheadline.weight(.medium))
+                            Text(language.text("Sign in once to view usage and switch accounts."))
                                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         }.frame(maxWidth: .infinity).padding(.vertical, 18)
                     }
@@ -72,35 +73,35 @@ struct PanelView: View {
             if let busy = model.busyText {
                 HStack(spacing: 7) {
                     ProgressView().controlSize(.mini)
-                    Text(busy).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Text(language.message(busy)).font(.caption).fixedSize(horizontal: false, vertical: true)
                     if model.signingIn {
                         Spacer(minLength: 0)
-                        Button("Cancel", action: model.cancelSignIn).controlSize(.small)
+                        Button(language.text("Cancel"), action: model.cancelSignIn).controlSize(.small)
                     }
                 }
             }
             if let notice = model.notice {
                 HStack(alignment: .top, spacing: 8) {
-                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                    Text(language.message(notice)).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     Button { model.notice = nil } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.plain).font(.caption2).help("Dismiss")
+                        .buttonStyle(.plain).font(.caption2).help(language.text("Dismiss"))
                 }
             }
             if model.showRecovery {
-                Button("Recover Interrupted Operation", action: model.recover).disabled(model.busyText != nil)
+                Button(language.text("Recover Interrupted Operation"), action: model.recover).disabled(model.busyText != nil)
             }
             HStack {
-                Button { model.signIn() } label: { Label("Add Account", systemImage: "plus") }
-                    .buttonStyle(.borderless).disabled(!model.canAct)
+                SettingsMenu(model: model)
                 Spacer()
-                Button("Quit", action: quit).buttonStyle(.borderless)
+                Button(language.text("Quit"), action: quit).buttonStyle(.borderless)
                     .keyboardShortcut("q").disabled(model.busyText != nil || model.refreshing)
             }
             .font(.caption).controlSize(.small)
         }
         .padding(12).frame(width: 380)
+        .environment(\.switchboardLanguage, language)
     }
 }
 
@@ -116,6 +117,7 @@ struct AccountCard: View {
     var renderingPreview = false
     var initiallyExpandedCredits = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.switchboardLanguage) private var language
 
     private var color: Color {
         guard case .available(let usage) = state, let remaining = usage.quotas.map(\.remaining).min() else { return .gray }
@@ -129,32 +131,32 @@ struct AccountCard: View {
                     .lineLimit(1).truncationMode(.middle).help(account.email)
                 Spacer(minLength: 0)
                 if case .signIn = state {
-                    Button("Sign In", action: signIn).buttonStyle(CompactActionStyle()).disabled(!enabled)
+                    Button(language.text("Sign In"), action: signIn).buttonStyle(CompactActionStyle()).disabled(!enabled)
                 } else if current {
                     CurrentBadge()
                 } else {
-                    Button("Switch", action: switchAccount).buttonStyle(CompactActionStyle()).disabled(!enabled)
+                    Button(language.text("Switch"), action: switchAccount).buttonStyle(CompactActionStyle()).disabled(!enabled)
                 }
                 if renderingPreview { Image(systemName: "ellipsis").frame(width: 15) }
                 else {
                     Menu {
-                        Button("Remove Account", role: .destructive, action: remove).disabled(!removable)
+                        Button(language.text("Remove Account"), role: .destructive, action: remove).disabled(!removable)
                     } label: { Image(systemName: "ellipsis") }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 18)
-                        .help(current ? "The current account cannot be removed" : "Account actions")
-                        .accessibilityLabel("Actions for \(account.email)")
+                        .help(language.text(current ? "The current account cannot be removed" : "Account actions"))
+                        .accessibilityLabel(language.format("Actions for %@", account.email))
                 }
             }
-            Text(PlanLabel.text(account.plan)).font(.caption).foregroundStyle(.secondary)
+            Text(language.text(PlanLabel.text(account.plan))).font(.caption).foregroundStyle(.secondary)
             switch state {
             case .loading:
-                Text("Refreshing…").font(.caption).foregroundStyle(.secondary)
+                Text(language.text("Refreshing…")).font(.caption).foregroundStyle(.secondary)
             case .unavailable:
-                Text("Unavailable").font(.caption).foregroundStyle(.secondary)
+                Text(language.text("Unavailable")).font(.caption).foregroundStyle(.secondary)
             case .signIn:
-                Text("Sign in required").font(.caption).foregroundStyle(.secondary)
+                Text(language.text("Sign in required")).font(.caption).foregroundStyle(.secondary)
             case .available(let usage):
-                if usage.quotas.isEmpty { Text("Unavailable").font(.caption).foregroundStyle(.secondary) }
+                if usage.quotas.isEmpty { Text(language.text("Unavailable")).font(.caption).foregroundStyle(.secondary) }
                 ForEach(usage.quotas) { quota in QuotaRow(quota: quota) }
                 ResetCreditsView(usage: usage, initiallyExpanded: initiallyExpandedCredits)
             }
@@ -170,10 +172,11 @@ struct AccountCard: View {
 }
 
 private struct CurrentBadge: View {
+    @Environment(\.switchboardLanguage) private var language
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "crown.fill").font(.system(size: 10, weight: .semibold))
-            Text("Current").font(.system(size: 11, weight: .bold))
+            Text(language.text("Current")).font(.system(size: 11, weight: .bold))
         }
         .foregroundStyle(Color(red: 0.25, green: 0.14, blue: 0.025))
         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -191,7 +194,7 @@ private struct CurrentBadge: View {
         }
         .fixedSize()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Current account")
+        .accessibilityLabel(language.text("Current account"))
     }
 }
 
@@ -208,6 +211,7 @@ struct CompactActionStyle: ButtonStyle {
 struct CardPreview: View {
     @ObservedObject var model: PanelModel
     var expandedCredits = false
+    private var language: AppLanguage { model.language }
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
             HStack {
@@ -220,20 +224,22 @@ struct CardPreview: View {
                             switchAccount: {}, signIn: {}, remove: {}, renderingPreview: true,
                             initiallyExpandedCredits: expandedCredits)
             }
-            HStack { Label("Add Account", systemImage: "plus"); Spacer(); Text("Quit") }.font(.caption)
+            HStack { Label(language.text("Settings"), systemImage: "gearshape"); Spacer(); Text(language.text("Quit")) }.font(.caption)
         }.padding(12).frame(width: 380)
+            .environment(\.switchboardLanguage, language)
     }
 }
 
 private struct QuotaRow: View {
     let quota: Quota
+    @Environment(\.switchboardLanguage) private var language
     private var color: Color { QuotaPalette.color(for: quota.remaining) }
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(quota.title).lineLimit(1).help(quota.title)
+                Text(language.quotaTitle(quota.title)).lineLimit(1).help(language.quotaTitle(quota.title))
                 Spacer(minLength: 4)
-                Text("\(quota.remaining.formatted(.number.precision(.fractionLength(0...1))))% left")
+                Text(language.format("%@%% left", quota.remaining.formatted(.number.precision(.fractionLength(0...1)).locale(language.locale))))
                     .fontWeight(.semibold).monospacedDigit()
             }.font(.caption)
             HStack(spacing: 8) {
@@ -243,12 +249,35 @@ private struct QuotaRow: View {
                             Capsule().fill(color).frame(width: geometry.size.width * quota.remaining / 100)
                         }
                 }.frame(width: 60, height: 3)
-                    .accessibilityLabel("\(quota.title): \(Int(quota.remaining)) percent remaining")
+                    .accessibilityLabel("\(language.quotaTitle(quota.title)): \(language.format("%@%% left", String(Int(quota.remaining))))")
                 if let reset = quota.resetsAt {
-                    Text("Resets \(reset.formatted(.dateTime.month(.abbreviated).day().hour().minute().locale(Locale(identifier: "en_US"))))")
-                        .help(reset.formatted(Date.FormatStyle(date: .complete, time: .standard, locale: Locale(identifier: "en_US"))))
-                } else { Text("Reset time unavailable") }
+                    Text(language.format("Resets %@", language.date(reset)))
+                        .help(language.date(reset, complete: true))
+                } else { Text(language.text("Reset time unavailable")) }
             }.font(.caption2).foregroundStyle(.secondary)
         }
+    }
+}
+
+struct SettingsMenu: View {
+    @ObservedObject var model: PanelModel
+    private var language: AppLanguage { model.language }
+
+    var body: some View {
+        Menu {
+            Button { model.signIn() } label: {
+                Label(language.text("Add Account"), systemImage: "plus")
+            }.disabled(!model.canAct)
+            Divider()
+            Picker(language.text("Language"), selection: $model.language) {
+                ForEach(AppLanguage.allCases) { option in
+                    Text(option.nativeName).tag(option)
+                }
+            }.pickerStyle(.menu)
+        } label: {
+            Label(language.text("Settings"), systemImage: "gearshape")
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .accessibilityIdentifier("settings-menu")
     }
 }

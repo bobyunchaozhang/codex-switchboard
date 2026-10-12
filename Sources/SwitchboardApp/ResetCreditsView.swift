@@ -5,6 +5,7 @@ private typealias CreditViewState<Value> = SwiftUI.State<Value>
 
 struct ResetCreditsView: View {
     let usage: Usage
+    @Environment(\.switchboardLanguage) private var language
     @CreditViewState private var expanded: Bool
 
     init(usage: Usage, initiallyExpanded: Bool = false) {
@@ -27,23 +28,23 @@ struct ResetCreditsView: View {
                             }.contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(summary(count: count, now: now)). \(expanded ? "Hide" : "Show") reset details")
+                        .accessibilityLabel("\(summary(count: count, now: now)). \(language.text(expanded ? "Hide reset details" : "Show reset details"))")
                         if expanded { details(now: now) }
-                    } else { Text("0 resets available") }
-                } else { Text("Reset count unavailable") }
+                    } else { Text(language.text("0 resets available")) }
+                } else { Text(language.text("Reset count unavailable")) }
             }.font(.caption).foregroundStyle(.secondary)
         }
     }
 
     private func summary(count: Int, now: Date) -> String {
-        let countText = "\(count) reset\(count == 1 ? "" : "s") available"
+        let countText = language.format(count == 1 ? "%d reset available" : "%d resets available", count)
         guard count > 0 else { return countText }
         if let date = usage.nextCreditExpiry(at: now) {
             let prefix = usage.hasIncompleteCreditDetails(at: now) ? "Next known expiry" : count == 1 ? "Expires" : "Next expiry"
-            return "\(countText) · \(prefix) \(Self.dateText(date))"
+            return "\(countText) · \(language.text(prefix)) \(language.date(date))"
         }
         let suffix = usage.hasIncompleteCreditDetails(at: now) ? "Expiry unavailable" : "Does not expire"
-        return "\(countText) · \(suffix)"
+        return "\(countText) · \(language.text(suffix))"
     }
 
     @ViewBuilder private func details(now: Date) -> some View {
@@ -52,35 +53,32 @@ struct ResetCreditsView: View {
                 ForEach(Array(credits.enumerated()), id: \.element.id) { index, credit in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
-                            Text(credit.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Reset \(index + 1)")
+                            Text(credit.title.flatMap { $0.isEmpty ? nil : language.text($0) } ?? language.format("Reset %d", index + 1))
                                 .fontWeight(.medium).lineLimit(2)
                             Spacer(minLength: 4)
                             if let status = credit.status, status != "available" {
-                                Text(status == "redeemed" ? "Used" : status == "redeeming" ? "In use" : "Status unknown").font(.caption2)
+                                Text(language.text(status == "redeemed" ? "Used" : status == "redeeming" ? "In use" : "Status unknown")).font(.caption2)
                             }
                         }
                         switch credit.expiry {
                         case .at(let date):
-                            Text("\(date <= now ? "Expired" : "Expires") \(Self.dateText(date))")
-                                .font(.caption2).help(date.formatted(date: .complete, time: .standard))
-                        case .never: Text("Does not expire").font(.caption2)
-                        case .unknown: Text("Expiry unavailable").font(.caption2)
+                            Text("\(language.text(date <= now ? "Expired" : "Expires")) \(language.date(date))")
+                                .font(.caption2).help(language.date(date, complete: true))
+                        case .never: Text(language.text("Does not expire")).font(.caption2)
+                        case .unknown: Text(language.text("Expiry unavailable")).font(.caption2)
                         }
                     }
                     .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
                 }
                 if usage.hasIncompleteCreditDetails(at: now) {
-                    Text("Some reset details are unavailable.").font(.caption2)
+                    Text(language.text("Some reset details are unavailable.")).font(.caption2)
                 }
             }
         } else {
-            Text(usage.resetCredits == nil ? "Reset details unavailable" : "No reset details reported")
+            Text(language.text(usage.resetCredits == nil ? "Reset details unavailable" : "No reset details reported"))
                 .font(.caption2)
         }
     }
 
-    private static func dateText(_ date: Date) -> String {
-        date.formatted(.dateTime.month(.abbreviated).day().hour().minute().locale(Locale(identifier: "en_US")))
-    }
 }

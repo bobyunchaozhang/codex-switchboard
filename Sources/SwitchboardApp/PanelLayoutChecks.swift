@@ -6,6 +6,7 @@ import SwitchboardCore
 @MainActor
 enum PanelLayoutChecks {
     static func run() async {
+        checkLocalization()
         checkNoticeRecovery()
         checkStatusTiming()
         let model = PanelModel.preview()
@@ -26,7 +27,12 @@ enum PanelLayoutChecks {
             ("Dismissed notice", model, nil),
             ("Expanded reset credits", .preview(), nil),
             ("Six accounts", .preview(accountCount: 6), nil),
-            ("Reopened", model, nil)
+            ("Reopened", model, nil),
+            ("Chinese accounts", .preview(language: .simplifiedChinese), nil),
+            ("Chinese empty", .preview(accountCount: 0, language: .simplifiedChinese), nil),
+            ("Chinese refreshing", .preview(refreshingCached: true, language: .simplifiedChinese), nil),
+            ("Chinese credits", .preview(language: .simplifiedChinese), nil),
+            ("Chinese failure", .preview(language: .simplifiedChinese), "Switch account failed. Codex did not respond in time.")
         ]
         for (name, fixture, notice) in cases {
             if name == "Refreshing cached accounts" {
@@ -37,7 +43,7 @@ enum PanelLayoutChecks {
                 }, "Cached quotas must stay visible while refreshing")
             }
             fixture.notice = notice
-            host.rootView = AnyView(PanelView(model: fixture, quit: {}, initiallyExpandedCredits: name == "Expanded reset credits").id(name))
+            host.rootView = AnyView(PanelView(model: fixture, quit: {}, initiallyExpandedCredits: name == "Expanded reset credits" || name == "Chinese credits").id(name))
             for _ in 0..<5 {
                 host.view.layoutSubtreeIfNeeded()
                 window.setContentSize(host.view.fittingSize)
@@ -53,6 +59,36 @@ enum PanelLayoutChecks {
         }
         window.contentViewController = nil
         print("Hosted panel layout checks passed")
+    }
+
+    static func checkLocalization() {
+        let suite = "local.codex-switchboard.language-check.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let first = PanelModel(loadRuntime: false, preferences: preferences)
+        precondition(first.language == .english, "First launch defaults to English")
+        first.language = .simplifiedChinese
+        let reopened = PanelModel(loadRuntime: false, preferences: UserDefaults(suiteName: suite)!)
+        precondition(reopened.language == .simplifiedChinese, "Language survives a new model and defaults instance")
+        reopened.language = .english
+        precondition(PanelModel(loadRuntime: false, preferences: preferences).language == .english)
+        preferences.set("unsupported", forKey: AppLanguage.preferenceKey)
+        precondition(PanelModel(loadRuntime: false, preferences: preferences).language == .english)
+
+        let cached = PanelModel.preview(refreshingCached: true)
+        let current = cached.currentID
+        let accounts = cached.accounts.map(\.id)
+        cached.notice = "Switch account failed. Codex did not respond in time."
+        cached.language = .simplifiedChinese
+        precondition(cached.currentID == current && cached.accounts.map(\.id) == accounts && cached.refreshing,
+                     "Changing language must preserve cached accounts and the in-flight refresh")
+        precondition(cached.language.message(cached.notice!) == "切换账号失败。Codex 响应超时。")
+        precondition(cached.language.quotaTitle("Model A · 5-hour") == "Model A · 5 小时")
+        precondition(cached.language.format("%@%% left", "39") == "剩余 39%")
+        precondition(cached.language.message("Codex is still using this environment (PID 12, 34). Close Codex or its CLI and retry.").contains("PID 12, 34"))
+        cached.language = .english
+        precondition(cached.language.message(cached.notice!) == cached.notice)
+        print("Language defaults, persistence, cached-state and dynamic-copy checks passed")
     }
 
     private static func checkStatusTiming() {

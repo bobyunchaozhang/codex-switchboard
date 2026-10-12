@@ -1,7 +1,7 @@
 # Codex Switchboard
 
 A macOS menu bar app for checking Codex usage and switching accounts.
-**Version: 0.4.4.** One fixed Codex home keeps local projects, chats, and MCP
+**Version: 0.5.0.** One fixed Codex home keeps local projects, chats, and MCP
 configuration available across accounts. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Download and install
@@ -31,7 +31,9 @@ After **Quit**, reopen `/Applications/Codex Switchboard.app`.
   remaining quota window.
 - The gold **Current** badge marks the verified current account.
 - **Switch** restarts Codex with the selected login. Running work can be interrupted.
-- **Add Account** and **Sign In** use official browser login.
+- **Settings → Add Account** and **Sign In** use official browser login.
+- **Settings → Language** selects English or 简体中文. English is the default;
+  changes apply immediately and persist across restarts and account switches.
 - **… → Remove Account** signs out a non-current account and removes its saved
   login. Current accounts cannot be removed; unknown identity disables removal.
 - **Recover Interrupted Operation** appears only when recovery is needed.
